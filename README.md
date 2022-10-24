@@ -11,6 +11,6 @@ Welcome to my projects! This repository includes some of the latest projects I'v
   - This opens as a Jupyter Notebook. Currently, this does not fully function as a standalone script yet - there are still some minor issues to iron out.
   - To use the script, manually input the path to a directory containing spheroid images (.jpg format only for now) into cell 2. Run cell 1 only once, the run cell 2 as many times as needed with various paths.
   - I have retained the fragmented bits of script I wrote during troubleshooting the final script in cells 3+. While not memory-efficient at all, they are a nice way of visualising the workflow and any potential problems.
-  - I have also added two dummy images to try the script on in <a href="https://github.com/tomasmartak/Projects/tree/main/python/img"> Projects/img </a> 
+  - I have also added three dummy images to try the script on in <a href="https://github.com/tomasmartak/Projects/tree/main/python/img"> Projects/img </a> 
 
   
