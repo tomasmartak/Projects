@@ -1,6 +1,6 @@
 # Information
 
-Welcome to my projects! This repository includes some of the latest projects I've been working on in R (R script), Python (Jupyter), and bash (bash script). They cover a variety of topics based on problems and datasets encountered in my lab at Terasom, and the solutions I came up with.
+Welcome to my projects! This repository includes some of the latest projects I've been working on in Python (Jupyter), shell scripting (bash), and R (R script in RStudio). They cover a variety of topics based on problems and datasets encountered in my lab at Terasom, and the solutions I came up with.
 
 <em><strong>Disclaimer:</strong> I am pretty much self-taught, except for R, on which I took a semester-long Life Sciences focused statistics course at the University of Glasgow. Use these scripts at your own peril - they are far from optimal and often include a mish-mash of solutions to problems I found on the fly. As of now they are not yet terminal-compatible (except for the bash scripts of course). I will be updating those that I will use again in the future.</em>
 
