@@ -30,7 +30,7 @@ Welcome to my projects! This repository includes some of the latest projects I'v
   - <strong>Rationale:</strong> our lab sent off in-lab-prepared stained SDS-PAGE gel bands for MS analysis (5 samples). My colleague wanted to know
   - <strong>How it works:</strong> download the anonymised and pre-tweaked Mass Spectrometry <a href="https://github.com/tomasmartak/Projects/tree/main/R/raw"> .csv file </a>. Input the location of this into the R script (my IDE of choice is RStudio) and run it. Everything important should be commented.
 
-  - Due to the existence of actual Mass Spectrometry result analysis and annotation pipelines, this script is pretty much useless. It was good as an exercise for the uninitiated who had no idea of such pipelines before.  
+  - Due to the existence of actual Mass Spectrometry result analysis and annotation pipelines, this script is pretty much useless. It was only good (perhaps) as an exercise for the uninitiated who had no idea of such pipelines before.  
 
 ## R: NIH Gene Ontology profile web scraper
   - <strong>Rationale:</strong> I was tasked to look through NIH GO databases and RNA-seq assays to find human tissue sample results for a specific protein and relate it to cancer recurrence. As this directly relates to our projects, I took the liberty of adding a dummy link to a similar assay using p53 instead.
