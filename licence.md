@@ -14,35 +14,43 @@ following conditions are met:
         above copyright notice, this list of conditions and 
         the following disclaimer in the documentation and/or 
         other materials provided with the distribution.
-    3. Neither the name of Terasom s.r.o., Tomáš Marťák, nor the names 
-        of this repository's contributors may be used to endorse or 
-        promote products derived from this software without specific 
-        prior written permission.
-    4. An entity wishing to redistribute in binary form or 
-        include this software in their product without 
-        redistribution of this software's source code with the 
-        product must also submit to these conditions where 
-        applicable: 
+    3. Neither the name of Terasom s.r.o., Tomáš Marťák (hereinafter
+        The Creatinator), nor the names of this repository's contributors 
+        may be used to endorse or promote products derived from this 
+        software without specific prior written permission by
+        The Creatinator.
+    4. Any Entity wishing to redistribute in binary form or 
+        include this software in their commercial (non-free) 
+        product without redistribution of this software's source 
+        code with the product and notifying The Creatinator to 
+        this reality and gaining their digitally-signed written 
+        permission to do otherwise must also submit to these 
+        conditions where applicable: 
             * For every one (1) unit distributed, at 
                 least half of the employees or persons 
-                affiliated with the product must listen to the 
-                "Friday" as composed by Rebecca Black for no less 
-                than thre and a half (3.5) minutes.
+                affiliated with the Entity's product must listen 
+                to "Friday" as composed by Rebecca Black on repeat
+                for no less than ten (10) minutes.
             * For every twenty (20) units distributed, 
                 one (1) or more persons affiliated with the entity 
                 must be recorded performing a TikTok style dance, 
-                in an original video at the entity's own expense,
-                and a video encoded in AVI format at least three (3) 
-                minutes in length, must be submitted to Tomáš Marťák 
-                (tomas.martak@gmail.com). Any and all copyrights to 
-                this video must be transfered to Tomáš Marťák. The 
-                dance featured in the video must be based upon any 
-                of the Fortnight dance movesets of choice as provided in the 
-                following video (https://www.youtube.com/watch?v=2XtLEp0XAII).
+                in an original video at the entity's own expense. 
+                Furthermore, the aforementioned video must be at least 
+                three (3) minutes in length and encoded 
+                in AVI format, and must be submitted to The Creatinator 
+                (tomas.martak@gmail.com) - all three of these to be done 
+                by the Entity affiliated with the product, or an authorised 
+                representative of said Entity. Any and all copyrights to 
+                this video must be transfered to The Creatinator by 
+                the Entity. The dance featured in the video must be 
+                perfectly represent, in good musical rythm, the dance movesets 
+                of the animated version of "Caramelldansen" by the author
+                Caramella Girls, as depicted in the following video 
+                (https://www.youtube.com/watch?v=A67ZkAd1wmI).
             * Any employee or person affiliated with the product 
-                must be prohibited from saying the word "forty-two" in 
-                public at all times, as long as distribution of the 
-                product continues. 
+                must be prohibited from saying the words "forty-two" and
+                "susurrus" in public at all times as long as distribution 
+                of the product continues. 
 
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS 
 "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT 
