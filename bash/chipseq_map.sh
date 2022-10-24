@@ -2,24 +2,23 @@
 
 # This script takes a fastq file of ChIP-seq data, runs FastQC and outputs a BAM file for it that is ready for peak calling. Bowtie2 is the aligner used, and the outputted BAM file is sorted by genomic coordinates and has duplicate reads removed using sambamba. Lastly, samtools and multiqc are used to generate qc reports.
 
-# USAGE:
+### USAGE: ###
 	# sh path/to script/ChIPseq_read_mapping.sh [path to script fq file target]
-	# skeleton: sh chipseq_map $1
-
+	# skeleton (presuming an alias is created): sh chipseq_map $1
 
 # initialize a variable to store the path and name of the target fastq (fq) ChIP-seq file
 fq=$1
 
 # variables
-genome=~/Documents/ChIP-seq/GRCh38_noalt_as/GRCh38_noalt_as # using hg19/GRCh38 as the reference genome; prebuilt by bowtie2 and not changed in any way.
-blacklist=~/Documents/ChIP-seq/GRCh38_noalt_as/blacklist/ENCFF356LFX.bed # official ENCODE blacklist for hg19
+genome=~/Documents/ChIP-seq/GRCh38_noalt_as/GRCh38_noalt_as # using hg19/GRCh38 as the reference genome; prebuilt by bowtie2 and not changed in any way; change as needed
+blacklist=~/Documents/ChIP-seq/GRCh38_noalt_as/blacklist/ENCFF356LFX.bed # official ENCODE blacklist for hg19; change as needed
 threads=7
 
 # grab base of filename for naming outputs and define working directory
 base=`basename $fq .fastq`
 wd=`dirname "$(dirname "$fq")"` # runs 2 levels down from the file
 
-# Sanity check
+# Sanity check - here because I'm currently still a noob, might remove later.
 echo "These are your chosen sample(s):" $base.fastq
 sleep 0.75
 echo "This is your chosen directory to deposit the results of this analysis into:" $wd
@@ -35,7 +34,7 @@ echo "The script will wait 5 seconds before automatically continuing."
 sleep 5
 
 # Populate the chosen directory.
-# The -p option means mkdir will create the whole path if it does not exist already
+# The -p option means mkdir will create the whole path if it does not exist already. While inelegant, I do have a batch version I'm working on that has this before the loop that is elegance personified.
 cd $wd
 mkdir logs results meta
 cd results
@@ -60,6 +59,9 @@ intermediate_bams=results/bowtie2/intermediate_bams
 fastqc -t $threads $fq  # -t threads
 mv raw/*_fastqc.* $fastqc_out
 echo "##### FastQC done. #####"
+
+### WARNING!!!
+echo "Warning! This script is missing Trimmomatic. This is pretty important in many cases for cleaning up data - while it is difficult to install, do so ASAP!"
 
 # Run bowtie2 -> aligns FASTQ files to reference genome, outputs SAM files
 echo "Running bowtie2 with" $threads "threads; this may take a while. Time started:"
@@ -93,10 +95,12 @@ echo "##### bedtools blacklist removal complete. #####"
 samtools stats $align_blacklisted > $samtool_stats
 echo "##### samtools alignment stats created. #####"
 
-# Move intermediate files out of the bowtie2 directory
+# Move intermediate files out of the bowtie2 directory. Bear in mind that not all of these are bams. Sorry not sorry.
 mv $bowtie_results/${base}*sorted* $intermediate_bams
-echo "##### files cleared up. #####"
+echo "##### files cleared up to the intermediate bams directory. #####"
 
 # Use multiqc to generate a report based on the samtool stats outputs
 multiqc results/bowtie2/. -n $base -o results/bowtie2/multiqc #-n: custom name; -o: output directory
 echo "##### multiQC output generated. #####"
+
+### The script ends here because my bash regex and capture skills are pretty inferior. In time I want to enable a batch mode to also take the results and run peak calling (MACS2) and visualisations (R packages) on data using the Input as a base and Control as a control in MACS.
