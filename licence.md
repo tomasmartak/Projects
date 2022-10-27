@@ -1,7 +1,7 @@
 Copyright (c) 2022, Tomáš Marťák
 All rights reserved.
 
-tomasmartak's modified Chicked Dance Project licence v0.1
+tomasmartak's modified Chicken Dance Project licence v0.1
 
 Redistribution and use in source and binary forms, with 
 or without modification, are permitted provided that the 
