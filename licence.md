@@ -15,14 +15,14 @@ following conditions are met:
         the following disclaimer in the documentation and/or 
         other materials provided with the distribution.
     3. Neither the name of Terasom s.r.o., Tomáš Marťák (hereinafter
-        The Creatinator), nor the names of this repository's contributors 
+        Creator), nor the names of this repository's contributors 
         may be used to endorse or promote products derived from this 
         software without specific prior written permission by
-        The Creatinator.
+        the Creator.
     4. Any Entity wishing to redistribute in binary form or 
         include this software in their commercial (non-free) 
         product without redistribution of this software's source 
-        code with the product and notifying The Creatinator to 
+        code with the product and notifying the Creator to 
         this reality and gaining their digitally-signed written 
         permission to do otherwise must also submit to these 
         conditions where applicable: 
@@ -37,11 +37,11 @@ following conditions are met:
                 in an original video at the entity's own expense. 
                 Furthermore, the aforementioned video must be at least 
                 three (3) minutes in length and encoded 
-                in AVI format, and must be submitted to The Creatinator 
+                in AVI format, and must be submitted to the Creator 
                 (tomas.martak@gmail.com) - all three of these to be done 
                 by the Entity affiliated with the product, or an authorised 
                 representative of said Entity. Any and all copyrights to 
-                this video must be transfered to The Creatinator by 
+                this video must be transfered to the Creator by 
                 the Entity. The dance featured in the video must be 
                 perfectly represent, in good musical rythm, the dance movesets 
                 of the animated version of "Caramelldansen" by the author
