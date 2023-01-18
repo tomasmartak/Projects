@@ -61,7 +61,7 @@ mv raw/*_fastqc.* $fastqc_out
 echo "##### FastQC done. #####"
 
 ### WARNING!!!
-echo "Warning! This script is missing Trimmomatic. This is pretty important in many cases for cleaning up data - while it is difficult to install, do so ASAP!"
+echo "Warning! This script is missing Trimmomatic. This is pretty important in many cases for cleaning up data.
 
 # Run bowtie2 -> aligns FASTQ files to reference genome, outputs SAM files
 echo "Running bowtie2 with" $threads "threads; this may take a while. Time started:"
