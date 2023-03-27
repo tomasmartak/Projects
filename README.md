@@ -1,8 +1,8 @@
 # Information
 
-Welcome to my projects! This repository includes some of the latest projects I've been working on in R (R script), Python (Jupyter), and bash (bash script). They cover a variety of topics based on problems and datasets encountered in my lab at Terasom, and the solutions I came up with.
+Welcome to my projects! This repository includes some of the latest projects I've been working on in Python (Jupyter), shell scripting (bash), and R (R script in RStudio). They cover a variety of topics based on problems and datasets encountered in my lab at Terasom, and the solutions I came up with.
 
-<em><strong>Disclaimer:</strong> I am pretty much self-taught, except for R, on which I took a semester-long Life Sciences focused statistics course at the University of Glasgow. Use these scripts at your own peril - they are far from optimal and often include a mish-mash of solutions to problems I found on the fly. As of now they are not yet terminal-compatible (except for the bash scripts of course). I will be updating those that I will use again in the future.</em>
+<em><strong>Disclaimer:</strong> I am pretty much self-taught, except for R, on which I took a semester-long Life Sciences focused statistics course at the University of Glasgow. Use these scripts at your own peril - they are far from optimal and often include a mish-mash of solutions to problems I found on the fly. As of now they are not yet command line-compatible (except for the bash scripts of course). I will be updating those that I will use again in the future.</em>
 
 # Projects:
 
@@ -16,11 +16,11 @@ Welcome to my projects! This repository includes some of the latest projects I'v
   - This script is currently not run within an environment. I know about python environments, but there is only so much information I can deal with before my head explodes. A .yaml file shall be added as soon as I gain more experience and learn to create and use environments properly.
 
 ## Linux bash: ChIP-seq mapper
-  - <strong>Rationale:</strong> our lab sent off in-lab-prepared ChIP samples off for sequencing. I set out to learn how to ChIP-seq analysis on Linux using terminal-based programmes.
-  - <strong>How it works:</strong> either run in terminal with sh or create an alias. Either way, create a target directory (let's call this chipseq) containing a single child directory (chipseq/raw). This will contain your .fastq ChIP-seq files (currently the script only works with these). Run the script along with the path to the desired .fastq file. <strong> Make sure that you have an appropriate bowtie2 index and an appropriate blacklist somewhere; check the script and adjust the paths there to suite what you currently have, otherwise it will not work. </strong>  
+  - <strong>Rationale:</strong> our lab sent off in-lab-prepared ChIP samples off for sequencing. I set out to learn how to ChIP-seq analysis on Linux using command line-based programmes.
+  - <strong>How it works:</strong> either run in the command line with sh or create an alias. Either way, create a target directory (let's call this chipseq) containing a single child directory (chipseq/raw). This will contain your .fastq ChIP-seq files (currently the script only works with these). Run the script along with the path to the desired .fastq file. <strong> Make sure that you have an appropriate bowtie2 index and an appropriate blacklist somewhere; check the script and adjust the paths there to suite what you currently have, otherwise it will not work. </strong>  
   - <strong>Overview:</strong> make directory --> FastQC --> bowtie2 alignment --> format change (samtools) --> sorting (sambamba) --> filtering multimappers and duplicates (sambamba) --> create indices  for further analysis (samtools) --> detract blacklisted chromosome regions (bedtools) --> generate alignment statistics (samtools) --> cleanup files into prepared directories --> generate an overall QC report before peak calling (MultiQC).
 
-  - <strong>WARNING:</strong> this script presumes you have a PC with 8+ threads, and it is currently set at 7.
+  - <strong>WARNING:</strong> this script presumes you are running it on a PC with 8+ threads, and it is currently set at 7.
   - Major inspiration for this exercise: <a href="https://github.com/hbctraining/Intro-to-ChIPseq/blob/master/schedule/3-day.md"> Harvard's Bioinformatic Core (HBC) training </a>.
   - This script hasn't had batch mode enabled as of now, as the aforementioned mode hasn't been tested yet.
   - This script doesn't include any trimming and other such QOL changes after FastQC analysis of our samples. It would seem that Trimmomatic just keeps adding further layers of obfuscation towards my pitiful attempts at building it. Also, Adobe Ant sucks. I shall add Trimmomatic in as soon as I can actually get it to work.
@@ -30,8 +30,8 @@ Welcome to my projects! This repository includes some of the latest projects I'v
   - <strong>Rationale:</strong> our lab sent off in-lab-prepared stained SDS-PAGE gel bands for MS analysis (5 samples). My colleague wanted to know
   - <strong>How it works:</strong> download the anonymised and pre-tweaked Mass Spectrometry <a href="https://github.com/tomasmartak/Projects/tree/main/R/raw"> .csv file </a>. Input the location of this into the R script (my IDE of choice is RStudio) and run it. Everything important should be commented.
 
-  - Due to the existence of actual Mass Spectrometry result analysis and annotation pipelines, this script is pretty much useless. It was good as an exercise for the uninitiated who had no idea of such pipelines before.  
+  - Due to the existence of actual Mass Spectrometry result analysis and annotation pipelines, this script is pretty much useless. It was only good (perhaps) as an exercise for the uninitiated who had no idea of such pipelines before.  
 
 ## R: NIH Gene Ontology profile web scraper
   - <strong>Rationale:</strong> I was tasked to look through NIH GO databases and RNA-seq assays to find human tissue sample results for a specific protein and relate it to cancer recurrence. As this directly relates to our projects, I took the liberty of adding a dummy link to a similar assay using p53 instead.
-  - <strong>How it works:</strong> Currently, this is to be run in an IDE (I prefer RStudio). Links to interesting assay results as well as data separators (e.g. recurrence vs no recurrence) have to be input manually, as well as graph descriptors. This can eventually be solved with computer vision, but at that time I had no idea I would ever even drift down that particular rabbit hole. For now, everythin is to be done manually, and this remains a simple proof-of-concept that can be massively improved upon.
+  - <strong>How it works:</strong> Currently, this is to be run in an IDE (I prefer RStudio). Links to interesting assay results as well as data separators (e.g. recurrence vs no recurrence) have to be input manually, as well as graph descriptors. This can eventually be solved with computer vision, but at that time I had no idea I would ever even drift down that particular rabbit hole. For now, everything is to be done manually, and this remains a simple proof-of-concept that can be massively improved upon.
