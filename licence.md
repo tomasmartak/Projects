@@ -32,9 +32,9 @@ following conditions are met:
                 to "Friday" as composed by Rebecca Black on repeat
                 for no less than ten (10) minutes.
             * For every twenty (20) units distributed, 
-                one (1) or more persons affiliated with the entity 
+                one (1) or more persons affiliated with the Entity 
                 must be recorded performing a TikTok style dance, 
-                in an original video at the entity's own expense. 
+                in an original video at the Entity's own expense. 
                 Furthermore, the aforementioned video must be at least 
                 three (3) minutes in length and encoded 
                 in AVI format, and must be submitted to the Creator 
