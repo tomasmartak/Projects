@@ -1,0 +1,1313 @@
+---
+title: "ChIP-seq analysis in H1299 and Panc1, single FAH X-link with monoclonal rabbit anti-protein_of_interest (04/2022)"
+author: "Tomáš Marťák"
+output: html_document
+---
+
+# R setup
+```{r setup, message=FALSE}
+#knitr::opts_chunk$set(echo = TRUE, eval=TRUE)
+knitr::opts_chunk$set(echo = TRUE, eval=TRUE)
+genome_dir <- "~/chipseq/genomes/hg38"
+bam_dir <- './BAM_ChIP-seq/'
+coverage_dir <- './coverage_ChIP-seq/'
+QC_dir <- './QC_ChIP-seq/'
+QC_trim_dir <- './QC_trim_ChIP-seq/'
+image_dir <- './images/'
+genome_gff <- paste0(genome_dir, 'Homo_sapiens.GRCh38.103.chr.gff3.gz')
+peakcall_dir <- "./MACS3/"
+```
+
+### TODO:
+* leverage sambamba functionality to aligning scripts instead of samtools, apparently it's about 3x faster
+* clean up discrepancies between HiSAT2 annotation/index downloading with wget vs aws (aws = faster)
+* clean up files: keep hg38/chm13, then add prefixes for the appropriate indexes.
+* make clear what versions of the human genome are being used (patch number for hg38, version for chm13). Do this at the start, then just name them hg13/chm13. Change filenames accordingly, add a README file into the files.
+* clean up code to stop adding extentions: strip them
+
+#--------------------------------------------------   SETUP   -----------------------------------------------------
+
+# Variables for shell scripts are stored in the file "shell_variables_ChIP-seq.sh" and can be modified as needed. The list is as follows:
+```{bash list_variables}
+cat ~/chipseq/shell_variables_ChIP-seq.sh
+```
+
+
+# Directory setup
+```{bash}
+### Source variables
+source ~/chipseq/shell_variables_ChIP-seq.sh
+
+### Establish base directories
+mkdir -p $basedir
+cd $basedir
+mkdir -p $bd_1 $bd_2
+```
+
+# Version control
+```{bash}
+### Source variables
+source ~/chipseq/shell_variables_ChIP-seq.sh
+
+### Version control
+echo "---------------hs2---------------"
+hisat2 --version
+echo "---------------bt2---------------"
+bowtie2 --version
+echo "---------------mm2---------------"
+$minimap2 --version
+```
+
+# EXPERIMENTAL!!! - Raw hg38.p14 - Getting GRCh38.p14; 
+* downloaded in RefSeq format from: https://ftp.ncbi.nlm.nih.gov/genomes/refseq/vertebrate_mammalian/Homo_sapiens/ --> latest assembly versions (careful, download speed seems to be capped to around 1MB/s)
+```{bash, message=FALSE, eval=TRUE}
+### Doc
+#   This chunk downloads GRCh38.p14 and its corresponding .gff annotation (RefSeq) into the chipseq/genomes/raw directory.
+# Subsequently, the RefSeq names in both the reference genome and the annotation are replaced with UCSC convention names.
+# The point of this is to have an annotated reference genome which is useable with minimap2 and others.
+# Drawbacks: the .gff is basically useless - it cannot be used for gene lookup in the igv window.
+
+### Setup - source and cd to basedir
+source ~/chipseq/shell_variables_ChIP-seq.sh
+cd $basedir
+mkdir -p $genome_dir_hg38_p14
+
+### Additional variables
+#annotations
+anno=${genome_dir_hg38_p14}GRCh38.p14.gff.gz # init annotation origin variable
+anno_tmp=${genome_dir_hg38_p14}GRCh38.p14_UCSC.gff # init temp anno variable
+#reference genome
+refgen=${genome_dir_hg38_p14}GRCh38.p14.fna.gz # reference genome
+refgen_tmp=${genome_dir_hg38_p14}GRCh38.p14_UCSC.fna # temporary reference genome > UCSC
+#urls
+url_report=https://ftp.ncbi.nlm.nih.gov/genomes/refseq/vertebrate_mammalian/Homo_sapiens/latest_assembly_versions/GCF_000001405.40_GRCh38.p14/GCF_000001405.40_GRCh38.p14_assembly_report.txt # url to NCBI assembly report; contains RefSeq/GenBank and UCSC naming conventions, among others
+url_anno=https://ftp.ncbi.nlm.nih.gov/genomes/refseq/vertebrate_mammalian/Homo_sapiens/latest_assembly_versions/GCF_000001405.40_GRCh38.p14/GCF_000001405.40_GRCh38.p14_genomic.gff.gz #url to annotation
+url_refgen=https://ftp.ncbi.nlm.nih.gov/genomes/refseq/vertebrate_mammalian/Homo_sapiens/latest_assembly_versions/GCF_000001405.40_GRCh38.p14/GCF_000001405.40_GRCh38.p14_genomic.fna.gz # url to refgen
+
+
+### download RefSeq genome annotation for hg38 patch 14 (latest version) .gff
+aria2c --dir=$basedir --quiet --out=$anno $url_anno
+
+## convert .gff annotation to UCSC headers, rename, cleanup
+${refseq_to_ucsc_refgen} $anno $url_report ${anno_tmp} # script renames RefSeq headers to UCSC format; automatic decompression
+rm $anno # remove old annotation -> done if you don't want to keep it
+
+## cleanup, then sort and index with igvtools
+#vars
+anno=${genome_dir_hg38_p14}GRCh38.p14.gff # update variable to new refgen
+anno_sorted=${genome_dir_hg38-p14}GRCh38.p14_UCSC_sorted.gff
+#cleanup
+mv ${anno_tmp} $anno # rename temp USCS file and change extension to make it IGV readable; indexed with IGV GUI
+#IGVtools
+$igvtools sort $anno $anno_sorted # creates a new copy
+mv $anno_sorted $anno # gets rid of the old copy
+$igvtools index $anno
+
+
+### download RefSeq hg38 genome patch 14 (latest version) .fna; convert to .fasta and index
+## download and rename
+aria2c --dir=$basedir --quiet --out=$refgen $url_refgen 
+
+## convert to UCSC headers, rename, cleanup
+${refseq_to_ucsc_refgen} $refgen $url_report ${refgen_tmp} # script renames RefSeq headers to UCSC format; automatic decompression
+rm $refgen # remove old genome -> done if you don't want to keep it
+
+## rename, index the resulting reference genome (whole) with samtools
+#vars
+refgen=${genome_dir_hg38_p14}GRCh38.p14.fna # update variable to new refgen
+#mv
+mv ${refgen_tmp} $refgen # rename temp USCS file and change extension to make it IGV readable
+#samtools
+samtools faidx $refgen_tmp
+```
+
+
+# Raw hg38 - Getting GRCh38 (old 2014 version); 
+* .gff annotation not needed, as a version for IGV is already present
+```{bash, message=FALSE, eval=TRUE}
+### Setup - source and cd to basedir
+source ~/chipseq/shell_variables_ChIP-seq.sh
+cd $basedir
+mkdir -p $genome_dir_hg38
+
+### Variables
+refgen=${genome_dir_hg38}hg38.fa.gz
+
+### download UCSC genome annotation for hg38, unzip
+aria2c --dir=$basedir --quiet --out=$refgen https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/hg38.fa.gz
+pigz -d $refgen
+```
+
+
+
+# Raw chm13v2.0 - Getting T2T-CHM13v2.0;
+* T2T-CHM13v2.0 genome annotation was downloaded via the chm13 github (https://github.com/marbl/CHM13#downloads). If follows UCSC naming conventions, so there is no reason to rename those.
+* .gff annotation not needed, as a version for IGV is already present
+
+```{bash, eval=TRUE}
+### Source and vars
+#source
+source ~/chipseq/shell_variables_ChIP-seq.sh
+#vars
+
+### Download analysis set using awscli (Amazon Web Services command line interface) - faster than wget
+#Note: only downloaded basic file and the README. For the full directory, check out
+# https://s3-us-west-2.amazonaws.com/human-pangenomics/index.html?prefix=T2T/CHM13/assemblies/analysis_set/
+aws s3 --no-sign-request cp s3://human-pangenomics/T2T/CHM13/assemblies/analysis_set/chm13v2.0.fa.gz ${genome_dir_chm13}
+aws s3 --no-sign-request cp s3://human-pangenomics/T2T/CHM13/assemblies/analysis_set/README.txt ${genome_dir_chm13}
+# unzip the fasta file
+pigz -d ~/${genome_dir_chm13}chm13v2.0.fa.gz
+```
+
+
+# HISAT2 index: hg38 and chm13 index  
+* hg38 (old, not GRCh38.p14!)  downloaded from https://genome-idx.s3.amazonaws.com/hisat/hg38_genome.tar.gz
+```{bash}
+### source variables and cd
+source ~/chipseq/shell_variables_ChIP-seq.sh
+cd $basedir # agnostic towards ~/; can run without the home prefix, as the command looks at child directories
+mkdir -p $genome_dir_hs2_hg38 $genome_dir_hs2_chm13
+
+### download hg38 hs2 index
+aws s3 --no-sign-request cp s3://genome-idx/hisat/hg38_genome.tar.gz $genome_dir_hs2_hg38
+#cd to make code shorter
+cd $genome_dir_hs2_hg38
+#unpack and move
+tar –xvzf hg38_genome.tar.gz
+mv hg38/* .
+#cleanup old files/dirs
+rm -d hg38
+rm hg38_genome.tar.gz
+
+### construct the chm13 hs2 index
+cd $basedir
+hisat2-build -p ${CPU} --noauto --bmaxdivn 8 --dcv 2048 ${genome_dir_chm13}chm13v2.0.fa genome # dunno what --bmaxdivn shoud be, however running auto crashes due to low memory; could do bmaxdivn 4, then 2, then 1 to see which works; the value is of course a fraction of 1, however what it means I simply do not know; all I know is that people with >500GB RAM servers still crashed on auto
+```
+
+
+# Bowtie2 index: hg38 and chm13 index
+* hg38 genome index built with Bowtie2.
+* Note: the chm13v2.0 index was downloaded, pre-compiled, from the bowtie2 page; no code was therefore necessary
+```{bash, eval=TRUE}
+### source variables and cd
+source ~/chipseq/shell_variables_ChIP-seq.sh
+cd $basedir
+mkdir -p $genome_dir_bt2_hg38 $genome_dir_bt2_chm13
+
+
+### construct the bt2 hg38 index (the one on the website has no alts)
+bowtie2-build --threads ${CPU} -f --dcv 2048 ${genome_dir_hg38}hg38.fa ${genome_dir_bt2_hg38}genome
+# -bmax can be left on auto with bt2, it seems to be much more memory-efficient than HISAT2 (uses +10 GB memory)
+# Goes up to 11.5 GM RAM usage at times.
+
+
+### download bt2 chm13 index
+aws s3 --no-sign-request cp s3://genome-idx/bt/chm13v2.0.zip $genome_dir_bt2_chm13
+cd to make code shorter
+cd $genome_dir_bt2_chm13
+#unpack and move
+unzip chm13v2.0.zip
+mv chm13v2.0/* .
+#cleanup old files/dirs
+rm -d chm13v2.0
+rm chm13v2.0.zip
+```
+
+#
+#----------------------------------------------------   QC   -------------------------------------------------------
+# Version control
+```{bash}
+### Source vars
+source ~/chipseq/shell_variables_ChIP-seq.sh
+
+### Version control
+fastqc --version
+multiqc --version
+java -jar $trimmomatic -version # technically not needed, as the filename states this, but good practice
+```
+
+# QC of raw sequence reads and results
+* Technical quality of library construction and sequencing run was tested using fastQC.
+```{bash, eval=TRUE}
+### source and cd
+source ~/chipseq/shell_variables_ChIP-seq.sh
+mkdir -p $bd_1
+cd $bd_1
+
+### loop to do QC on raw ChIP-seq reads (in .fastq format)
+#grab all raw files
+mapfile -t fastq_files < <(ls -1 "${fastq_dir}" | grep "${fastq_file_ext}")
+#loop through them and do fastqc on them
+for i in ${fastq_files[@]};
+do
+  fastqc --quiet --outdir "${QC_dir}" --threads "${CPU}" "${fastq_dir}${i}"
+done
+#concatenate fastqc reports w/ multiqc
+multiqc -f -m fastqc -i ChIP-seq -o "${QC_dir}" "${QC_dir}"
+```
+* 76 nt SE reads
+* ~40M reads per sample (IPs), ~15-17M reads per sample (inputs)
+* read quality deteriorate at the very 3' end, trimming will be needed
+* negligible adapter contamination detected, but will be removed
+* very low read duplication levels!
+* 2 samples give warning on per base sequence content (inputs)
+* 3 samples give error/warning on per sequence GC content (GC profiles of inputs are clearly different from IP profiles)
+
+# Read trimming of reads (trimommatic)
+* Remove adapters.
+* Trim parts of the reads where average base quality in a 4 nt window drops below 20.
+* Only keep trimmed reads that are at least 20 nt long.
+
+```{bash, eval=TRUE}
+### Source and cd
+source ~/chipseq/shell_variables_ChIP-seq.sh
+cd $bd_1
+
+### create trimmed dir
+mkdir -p "${fastq_trim_dir}"
+fastq_files=( $(ls -1 "${fastq_dir}" | grep "${fastq_file_ext}") )
+
+### loop through raw files and conduct read trimming with trimommatic
+for i in ${fastq_files[@]};
+do
+  # Phred+33: is Illumina1.9/Sanger as defined by fastqc
+  java -jar $trimmomatic SE -phred33 -threads $CPU "${fastq_dir}${i}" "${fastq_trim_dir}${i}.trim.fastq.gz" ILLUMINACLIP:/usr/share/trimmomatic/TruSeq3-SE.fa:2:30:10 SLIDINGWINDOW:4:20 MINLEN:20
+done
+```
+
+# QC of quality-trimmed sequence reads (fastQC, MultiQC)
+Evaluated the effects of trimming on the reads
+```{bash, eval=TRUE}
+### Source and cd
+source ~/chipseq/shell_variables_ChIP-seq.sh
+cd $bd_1
+mkdir -p "${QC_trim_dir}"
+
+### do fastqc of trimmed files
+#read trimmed read locations into a variable 
+fastq_files=( $(ls -1 "${fastq_trim_dir}") )
+#loop through them and do fastqc
+for i in ${fastq_files[@]};
+do
+  fastqc --quiet --outdir "${QC_trim_dir}" --threads "${CPU}" "${fastq_trim_dir}${i}"
+done
+#concatenate into multiqc report
+multiqc -f -m fastqc -i ChIP-seq_trimmed -o "${QC_trim_dir}" "${QC_trim_dir}"
+```
+
+Results of QC:
+* dropped <2% of reads
+* 20-76 nt reads (vast majority of reads are >74 nt)
+* read quality scores now OK
+* adapters removed successfully
+
+#
+#-----------------------------------------------   Read Mapping   --------------------------------------------------
+
+# Version control
+```{bash}
+# variable setup
+source ~/chipseq/shell_variables_ChIP-seq.sh
+
+# version control
+echo "---------------hs2---------------"
+hisat2 --version
+echo "---------------bt2---------------"
+bowtie2 --version
+echo "---------------mm2---------------"
+echo "minimap2 version:"; $minimap2 --version
+echo "---------------samtools---------------"
+samtools --version
+echo "---------------sambamba---------------"
+$sambamba --version
+echo "---------------deeptools---------------"
+deeptools --version
+echo "---------------bedtools---------------"
+bedtools --version
+```
+
+# IGNORE! Read normalisation.
+```{bash, eval=FALSE}
+### Documentation
+# Not much to say. This was not done, and all the required information is in the md text above.
+
+### Source
+<!-- source ~/chipseq/shell_variables_ChIP-seq.sh -->
+<!-- cd $bd_1 -->
+
+## sample H1299 ChIP dataset
+<!-- H1299_file="$(ls -1 ${bam_dir} | grep '^H1299_ChIP_S.*bam$')"    -->
+<!-- samtools view -b -s 1.390 --threads "${CPU}" "${bam_dir}${H1299_file}" > ${bam_dir}H1299_ChIP_sample.bam --> # for some reason, 1. + multiplier is written. I don't really get that, but so be it. 
+<!-- echo "reads in H1299 ChIP sample file:" -->
+<!-- samtools view -c --threads "${CPU}" "${bam_dir}H1299_ChIP_sample.bam" -->
+<!-- samtools index -@ "${CPU}" "${bam_dir}H1299_ChIP_sample.bam" -->
+
+## "sample" H1299 input dataset
+<!-- H1299_file="$(ls -1 ${bam_dir} | grep '^H1299_INPUT_S.*bam$')" -->
+<!-- samtools view -b --threads "${CPU}" "${bam_dir}${H1299_file}" > ${bam_dir}H1299_INPUT_sample.bam   -->
+<!-- echo "reads in H1299 INPUT 'sample' file:" -->
+<!-- samtools view -c --threads "${CPU}" "${bam_dir}H1299_INPUT_sample.bam" -->
+<!-- samtools index -@ "${CPU}" "${bam_dir}H1299_INPUT_sample.bam" -->
+
+## sample PANC1 ChIP dataset
+<!-- PANC1_file="$(ls -1 ${bam_dir} | grep '^PANC1_ChIP_S.*bam$')"   -->
+<!-- samtools view -b -s 1.394 --threads "${CPU}" "${bam_dir}${PANC1_file}" > ${bam_dir}PANC1_ChIP_sample.bam   -->
+<!-- echo "reads in PANC1 ChIP sample file:" -->
+<!-- samtools view -c --threads "${CPU}" "${bam_dir}PANC1_ChIP_sample.bam" -->
+<!-- samtools index -@ "${CPU}" "${bam_dir}PANC1_ChIP_sample.bam" -->
+
+## sample PANC1 ChIP dataset
+<!-- PANC1_file="$(ls -1 ${bam_dir} | grep '^PANC1_INPUT_S.*bam$')"   -->
+<!-- samtools view -b -s 1.910 --threads "${CPU}" "${bam_dir}${PANC1_file}" > ${bam_dir}PANC1_INPUT_sample.bam   -->
+<!-- echo "reads in PANC1 INPUT sample file:" -->
+<!-- samtools view -c --threads "${CPU}" "${bam_dir}PANC1_INPUT_sample.bam" -->
+<!-- samtools index -@ "${CPU}" "${bam_dir}PANC1_INPUT_sample.bam" -->
+```
+
+# hisat2 hg38 and chm13 read mapping (bam; hg38/chm13)  
+```{bash, eval=TRUE}
+### source and cd
+source ~/chipseq/shell_variables_ChIP-seq.sh
+cd $bd_1
+
+### Read mapping to hg38
+## temp variables 1
+index=${basedir}${genome_dir_hs2_hg38}genome
+bam_dir=$bams_hs2_hg38
+
+## mkdirs
+mkdir -p $bam_dir
+
+## spider read files and do read mapping
+eval "$hs2_map"
+
+
+### Read mapping to chm13
+## temp variables 2
+index=${basedir}${genome_dir_hs2_chm13}genome
+bam_dir=$bams_hs2_chm13
+
+## mkdirs
+mkdir -p $bam_dir
+
+## spider read files and do read mapping
+eval "$hs2_map"
+```
+Notes for hg38:
+* Mapping rates were ~89% (input) and ~94% (IP).
+
+Below are the numbers of reads in the ChIP-seq files. Added are ratios that could be used for read normalisation (could be done with samtools view) if needed. This was not done due to the low number of input reads present.
+* H1299 ChIP: 39817527
+* H1299 input: 15540571
+  * H1299 input/IP ratio: 0.3902947
+* PANC1 ChIP: 39463872
+* PANC1 input: 17073630
+  * H1299 input/PANC1 IP ratio: 0.394
+  * H1299 input/PANC1 input ratio: 0.910
+  
+
+Notes for chm13
+* Mapping rates were ~92% (input) and 95-97% (IP).
+
+Below are the numbers of reads in the ChIP-seq files. Added are ratios that could be used for read normalisation (could be done with samtools view) if needed. This was not done due to the low number of input reads present.
+* H1299 ChIP: 39817527
+* H1299 input: 15540571
+  * input/IP: 0.3902947
+* PANC1 ChIP: 39463872
+* PANC1 input: 17073630
+  * H1299 input/PANC1 IP: 0.394
+  * H1299 input/PANC1 input: 0.910
+
+
+# bowtie2 hg38 and chm13 read mapping (bam; hg38/chm13)
+```{bash, eval=TRUE}
+### source and cd
+source ~/chipseq/shell_variables_ChIP-seq.sh
+cd $bd_1
+
+### Read mapping to hg38
+## temp variables 1
+index=${basedir}${genome_dir_bt2_hg38}genome
+bam_dir=$bams_bt2_hg38
+
+## mkdirs
+mkdir -p $bam_dir
+
+## spider read files and do read mapping
+eval "$bt2_map"
+
+### Read mapping to chm13
+## temp variables 2
+index=${basedir}${genome_dir_bt2_chm13}genome
+bam_dir=$bams_bt2_chm13
+
+## mkdirs
+mkdir -p $bam_dir
+
+## spider read files and do read mapping
+eval "$bt2_map"
+```
+
+# !!!DON'T RUN IN .RMD!!! minimap2 hg38/chm13 read mapping (bam; hg38/chm13)
+reason: this will crash the system on a laptop - see explanation below.
+```{bash, eval= FALSE}
+########################## WARNING!!!! - do not run - explanation below ###################################################
+# Running this will cause the laptop to crash. Minimap2 uses an incredible ~12.5GB of RAM when running on "split prefix", meaning that even having Rstudio open is too much. So is running this script in bash in a loop. Therefore, the only alternative was copy-pasting this into the terminal and manually setting num=X depending on the file that should be mapped.
+# Running multiple numbers as a script was already attempted - somehow, minimap2 will use the opportunity not to wait until the previous instance finishes, but to simply continue with a new instance. This of course overwhelms the RAM capacity of a mere laptop such as the one I'm running this on and minimap2 is, frustratingly, killed.
+
+#################### This script is to be run from the terminal once, manually changing the dir every time. Looping it crashed my laptop ##########################################################################################################################
+### source and cd
+source ~/chipseq/shell_variables_ChIP-seq.sh
+cd $bd_1
+
+#############################################################################################################
+<!-- CHUNK RUN FOR HG38; CHANGE "NUM" EVERY TIME TO RUN THROUGH IT EASILY; RUN IN TERMINAL TO SAVE RAM -->
+hg38=${basedir}${genome_dir_hg38}hg38.fa # hg38 refgen
+num=0 # sets up a indexer for the grep'd trimmed sequence files; change this manually
+
+### File spider and in/out setup
+fastq_files=( $(ls -1 "${fastq_trim_dir}" | grep "${fastq_file_ext}") )
+infile=${fastq_trim_dir}${fastq_files[$num]}
+outfile=${bams_mm2_hg38}${fastq_files[$num]}.sam
+
+# minimap2 mapping
+$minimap2 -ax sr --split-prefix ${infile}.tmp $index $infile > $outfile 
+
+
+#############################################################################################################
+<!-- CHUNK RUN FOR CHM13; CHANGE "NUM" EVERY TIME TO RUN THROUGH IT EASILY; RUN IN TERMINAL TO SAVE RAM -->
+chm13=${basedir}${genome_dir_chm13}chm13v2.0.fa # chm13 refgen
+num=0 # sets up a indexer for the grep'd trimmed sequence files; change this manually
+
+### File spider and in/out setup
+fastq_files=( $(ls -1 "${fastq_trim_dir}" | grep "${fastq_file_ext}") )
+infile=${fastq_trim_dir}${fastq_files[$num]}
+outfile=${bams_mm2_chm13}${fastq_files[$num]}.sam
+
+# minimap2 mapping
+$minimap2 -ax sr --split-prefix ${infile}.tmp $index $infile > $outfile 
+```
+
+Continued: actually runnable script that takes the minimap2 output and goes on from there
+```{bash}
+### Source and cd
+source ~/chipseq/shell_variables_ChIP-seq.sh
+cd $bd_1
+
+### Variables
+bams_mm2_chm13
+sam_dir_chm13=./BAM_ChIP-seq_mm2_chm13/
+
+# directory setup
+cd ~/chipseq/experiment
+
+# grepping files
+sam_files_hg38=( $(ls -1 $bams_mm2_hg38 | grep "\.sam$") )
+sam_files_chm13=( $(ls -1 $bams_mm2_chm13 | grep "\.sam$") )
+
+### code - hg38; loop through mapped .SAM files, convert to .BAM, sort/index them for IGV and output their stats
+for i in ${sam_files_hg38[@]};
+do
+	infile="${bams_mm2_hg38}${i}"
+	outfile="${bams_mm2_hg38}${i}.bam"
+  echo "${outfile}"
+  # samtools view: BAM input (-b) to SAM (default)
+  samtools view -@ $CPU -Shub -F 256 $infile \
+    $sambamba sort -t $CPU -o $outfile /dev/stdin 
+	samtools index -@ $CPU $outfile
+	echo "reads in ${i} file:"
+	samtools view -@ $CPU -c  $outfile
+  samtools idxstat $outfile
+done
+
+
+### code - chm13; loop through mapped .SAM files, convert to .BAM, sort/index them for IGV and output their stats
+for i in ${sam_files_chm13[@]};
+do
+	infile="${bams_mm2_chm13}${i}"
+	outfile="${bams_mm2_chm13}${i}.bam"
+  echo "${outfile}"
+  # samtools view: BAM input (-b) to SAM (default)
+  samtools view -@ $CPU -Shub -F 256 $infile \
+    $sambamba sort -t $CPU -o $outfile /dev/stdin 
+	samtools index -@ $CPU $outfile
+	echo "reads in ${i} file:"
+	samtools view -@ $CPU -c  $outfile
+  samtools idxstat $outfile
+done
+
+
+### cleanup of sam files
+#hg38
+for i in ${sam_files_hg38[@]};
+do
+  rm "${bams_mm2_hg38}${i}"
+done
+#chm13
+for i in ${sam_files_chm13[@]};
+do
+  rm "${bams_mm2_chm13}${i}"
+done
+```
+
+# QC of alignment: samtools flagstat on all the resulting bams
+```{bash, eval = TRUE}
+### Source 
+source ~/chipseq/shell_variables_ChIP-seq.sh
+
+### Find all folders starting with "Bam_ChIP-seq_" in ~/chipseq/1_experiment ($bd_1; defined in sourced file)
+bam_folders=($(find $bd_1 -type d -name "BAM_ChIP-seq_*"))
+
+# Loop through each folder and generate alignment statistics for each .bam file
+for folder in "${bam_folders[@]}"
+do
+    # Find all .bam files in the current folder and pipe to xargs to parallelize processing (7 CPUs)
+    find "$folder" -type f -name "*.bam" | xargs -I {} -P 7 bash -c '
+        bam="{}"
+        # Get the total number of reads and the number of aligned reads
+        stats=$(samtools flagstat -@ 7 "$bam")
+        total_reads=$(echo "$stats" | grep "in total" | awk "{print \$1}")
+        aligned_reads=$(echo "$stats" | awk "/mapped \(/ {print \$1; exit}")
+        
+        # Calculate the percentage of aligned reads
+        aligned_pct=$(echo "scale=2; 100*$aligned_reads/$total_reads" | bc -l | tr -d "^\n*")
+        
+        # Get the number of reads that fail quality control
+        qc_failed=$(echo "$stats" | grep "QC failed" | awk "{print \$1}")
+        
+        # Print the alignment statistics to the terminal
+        echo "------------------------------------------------------------"
+        echo "Stats for file: $bam"
+        echo "Total reads: $total_reads"
+        echo "Aligned reads: $aligned_reads (${aligned_pct}% of total reads)"
+        echo "Reads failing QC: $qc_failed"
+    '
+done
+```
+Notes:
+* all reads passed QC
+
+* generally, alignment rates were over 95%
+  * At least 89.71% of all reads in input were aligned
+  * At least 91.47% of all reads in IP were aligned
+
+# 
+#------------------------------------------   Sampling hg38 alt regions   ------------------------------------------
+# Make bowtie2 and hisat2 cutouts for the gene_of_interest region (fasta file)
+```{bash, eval = True}
+### Setup
+source ~/chipseq/shell_variables_ChIP-seq.sh
+
+### Variables
+region="chr6:82360000-82370000" # get the gene_of_interest region from the aligned bam files
+bam_orig_bt2=${bd_1}${bams_bt2_hg38}
+bam_orig_hs2=${bd_1}${bams_hs2_hg38}
+fastas_bt2=${bd_2}fasta_bt2/
+fastas_hs2=${bd_2}fasta_hs2/
+
+### Make dirs
+mkdir -p $fastas_bt2 $fastas_hs2
+
+### grep files and remove extensions
+bt2_mapped=( $(ls -1 "${bam_orig_bt2}" | grep "\.bam$" ) )
+hs2_mapped=( $(ls -1 "${bam_orig_hs2}" | grep "\.bam$" ) )
+
+### bt2 fasta generation script
+for i in ${bt2_mapped[@]}; do
+	infile="${bam_orig_bt2}${i}"
+	base="$i" 
+	
+	# extract base filename - remove all the extensions that acummulated up over time
+	while [[ "$base" == *.* ]]; do
+    base=${base%.*}
+  done
+	
+	# make output path
+	outfile="${fastas_bt2}${base}-cutout.fasta"
+	
+	# Extract reads from the specified region using samtools; process fastq with awk to convert into fasta
+  samtools view -b $infile $region | \
+      samtools bam2fq | \
+      awk '{if(NR%4==2) {print ">" NR/4 "\n" $0}}' > $outfile
+done
+
+### hs2 fasta generation script
+for i in ${hs2_mapped[@]}; do
+	infile="${bam_orig_hs2}${i}"
+	base="$i"
+	
+	# extract base filename - remove all the extensions that acummulated up over time
+	while [[ "$base" == *.* ]]; do
+    base=${base%.*}
+  done
+	
+	# make output path
+	outfile="${fastas_hs2}${base}-cutout.fasta"
+	
+	# Extract reads from the specified region using samtools; process fastq with awk to convert into fasta
+  samtools view -b $infile $region | \
+      samtools bam2fq | \
+      awk '{if(NR%4==2) {print ">" NR/4 "\n" $0}}' > $outfile
+done
+
+```
+
+
+#-------------------------------------------   Mapping combinations   ----------------------------------------------
+# Prep combination of hg38 portions for mapping  (fastas)
+```{bash, eval = True}
+### Setup and cd
+source ~/chipseq/shell_variables_ChIP-seq.sh
+cd $basedir
+
+
+### Variables
+## Main
+output=$genome_dir_hg38_extra
+genome=${genome_dir_hg38}hg38.fa
+
+## hg38 genome subdirectories
+whole_alt=$genome
+whole_noalt=${output}whole_noalt/
+part_noalt=${output}part_noalt/
+part_alt=${output}part_alt/
+alt=${output}alt/
+
+
+### Make directory to contain gene_of_interest cutouts and define gene_of_interest cutout region
+mkdir -p $output
+$region_to_bed chr1 82360000 82370000 "${output}gene_of_interest_cutout.bed"  <<< "c" # make a bed file containing the region we want to cut out; using UCSB chromosome notation because the reference gene fasta also contains it 
+
+
+### Make other directories
+mkdir -p $whole_noalt $part_noalt $part_alt $alt
+
+
+### Make file containing a list of main chromosomes we want removed from hg38
+#init handle
+xsomes_classic="${output}xsomes_classic.txt"
+# Generate the desired output and save it to the file
+echo ">chr1
+>chr2
+>chr3
+>chr4
+>chr5
+>chr6
+>chr7
+>chr8
+>chr9
+>chr10
+>chr11
+>chr12
+>chr13
+>chr14
+>chr15
+>chr16
+>chr17
+>chr18
+>chr19
+>chr20
+>chr21
+>chr22
+>chrX
+>chrY
+>chrM" > $xsomes_classic
+
+
+### A quick python script that will do the filtering for you
+    # syntax: $filter <toExcise.txt> <original.fasta> <output.fasta>
+## alt only; xsomes_classic contains a list of conventional chromosomes (+mtchDNA)
+$filter_fasta $xsomes_classic $genome ${alt}genome.fasta # the file xsomes_classic was manually generated
+
+
+### Whole noalt - discount alt from original (cca 3.5Gb memory)
+$diff_fasta $whole_alt ${alt}genome.fasta ${whole_noalt}genome.fasta
+
+
+### Part alt - discount gene_of_interest cutout from whole original
+bedtools maskfasta -fi $genome -bed $cutout -fo ${part_alt}genome.fasta
+
+
+### Part noalt - discount gene_of_interest cutout from whole noalt
+bedtools maskfasta -fi ${whole_noalt}genome.fasta -bed $cutout -fo ${part_noalt}genome.fasta
+```
+
+
+# Index all hg38 portions with bowtie2 (.bt2)
+```{bash}
+### Setup
+source ~/chipseq/shell_variables_ChIP-seq.sh
+
+
+### variables
+dir=$genome_dir_hg38_extra
+hg38_raw="${dir}hg38.fa"
+to_index=($hg38_raw) # initiate the variable containing paths for genomes to index; start with the whole one first
+
+### spider through all the folders in extra, add to $to_index
+for folder in $dir; do
+  # find all files in the current folder that match "genome.fasta"
+  matches=$(find "$folder" -name "genome.fasta")
+  # add each file path to the file_paths array
+  for file in $matches; do
+    to_index+=("$file")
+  done
+done
+#echo "${to_index[@]}"
+### generate bowtie2 index for all the spidered files
+for genome in ${to_index[@]}; do
+  infile=$genome
+  outfile="${genome%\/*}/"
+  #echo "outfiles: $outfile"
+  bowtie2-build -p $CPU -f --dcv 2048 $infile ${outfile}genome
+done
+```
+
+
+# Index all hg38 portions with hisat2 (.hs2)
+```{bash}
+### Setup
+source ~/chipseq/shell_variables_ChIP-seq.sh
+
+
+### variables
+dir=$genome_dir_hg38_extra
+hg38_raw="${dir}hg38.fa"
+to_index=($hg38_raw) # initiate the variable containing paths for genomes to index; start with the whole one first
+
+### spider through all the folders in extra, add to $to_index
+for folder in $dir; do
+  # find all files in the current folder that match "genome.fasta"
+  matches=$(find "$folder" -name "genome.fasta")
+  # add each file path to the file_paths array
+  for file in $matches; do
+    to_index+=("$file")
+  done
+done
+
+#echo "${to_index[@]}"
+### generate bowtie2 index for all the spidered files
+for genome in ${to_index[@]}; do
+  infile=$genome
+  outfile="${genome%\/*}/"
+  #echo "outfiles: $outfile"
+  hisat2-build -p $CPU --noauto --bmaxdivn 8 --dcv 2048 $infile ${outfile}genome
+done
+```
+
+# Map reads to all regions - bowtie2 (.bam + index)
+```{bash}
+### Source
+source ~/chipseq/shell_variables_ChIP-seq.sh
+
+### Variables
+extra=$genome_dir_hg38_extra
+extra_folders=$(find "$extra" -type d)
+hg38_raw=genome_dir_hg38 # directory with raw genome index (whole/alts)
+index_folders=($hg38_raw) # intitiate the index folders list
+
+reads_folder=${bd_2}fasta_bt2/ #folder w/ excised reads that previously mapped to the gene_of_interest region with Bowtie2; fasta format
+bams_bt2=${bd_2}bams_bt2/
+fastas_bt2=${bd_2}fasta_bt2/
+analysis_bt2=${ofb}analysis_bt2/
+
+### Form extra directories
+mkdir -p $bams_bt2 $analysis_bt2
+
+### spider through all the folders in hg38 + $extra, add them to a variable
+for folder in $extra_folders; do
+   # exclude the parent dir $extra from the loop
+  if [ "$folder" == "$extra" ]; then
+    continue
+  fi
+  # find all files in the current folder that match "index.*.bt2"
+  matches=$(find "$folder" -name "genome.*.bt2")
+  # add the folder to the to_index array if it contains a file named "index.*.bt2"
+  if [ "$matches" ]; then
+    index_folders+=("${folder}/")
+  fi
+done
+
+### grep excised fastas into a variable
+fasta_bt2_files=( $(ls -1 ${fastas_bt2} | grep "\.fasta$") )
+
+### Mapping the brand new files using bt2 
+for f in ${index_folders[@]}; do
+  index=${f}index
+  for i in ${fasta_bt2_files[@]}; do
+  	suffix=$(basename $f) # store $f base for later use
+  	infile="${fastas_bt2}${i}"
+    outfile="${bams_bt2}${suffix}/${i%.*}_${suffix}.bam"
+    mkdir -p ${bams_bt2}${suffix} ${analysis}${suffix}
+    bowtie2 -t -x ${f}index -f $infile -p $CPU | \
+      samtools view -Shub -F 256 -@ $CPU - | \
+      $sambamba sort -t $CPU -o $outfile /dev/stdin 
+    samtools index -@ $CPU $outfile
+    samtools idxstats -@ $CPU $outfile > "${analysis_bt2}${suffix}/${i%.*}_${suffix}.tsv"
+  done
+done
+
+:' Testing code for loop
+echo "iteration $f vs $i"
+    echo "bt2: $infile --> samtools --> sambamba $outfile --> index it --> idxstats it into ${analysis}${suffix}/${i%.*}_${suffix}.tsv"
+'
+```
+
+# Map reads to all regions - hisat2 (.bam + index)
+```{bash}
+### Source
+source ~/chipseq/shell_variables_ChIP-seq.sh
+
+### Variables
+extra=$genome_dir_hg38_extra
+extra_folders=$(find "$extra" -type d)
+hg38_raw=genome_dir_hg38 # directory with raw genome index (whole/alts)
+index_folders=($hg38_raw) # intitiate the index folders list
+
+reads_folder=${bd_2}fasta_hs2/ #folder w/ excised reads that previously mapped to the gene_of_interest region with Bowtie2; fasta format
+bams_hs2=${bd_2}bams_hs2/
+fastas_hs2=${bd_2}fasta_hs2/
+analysis_hs2=${bd_2}analysis_hs2/
+
+### Form extra directories
+mkdir -p $bams_hs2 $analysis_hs2
+
+### spider through all the folders in hg38 + $extra, add them to a variable
+for folder in $extra_folders; do
+   # exclude the parent dir $extra from the loop
+  if [ "$folder" == "$extra" ]; then
+    continue
+  fi
+  # find all files in the current folder that match "index.*.hs2"
+  matches=$(find "$folder" -name "genome.*.ht2")
+  # add the folder to the to_index array if it contains a file named "index.*.hs2"
+  if [ "$matches" ]; then
+    index_folders+=("${folder}/")
+  fi
+done
+
+### grep excised fastas into a variable
+fasta_hs2_files=( $(ls -1 ${fastas_hs2} | grep "\.fasta$") )
+
+### Mapping the brand new files using hs2 (to test whether it works)
+for f in ${index_folders[@]}; do
+  index=${f}index
+  for i in ${fasta_hs2_files[@]}; do
+  	suffix=$(basename $f) # store $f base for later use
+  	infile="${fastas_hs2}${i}"
+    outfile="${bams_hs2}${suffix}/${i%.*}_${suffix}.bam"
+    mkdir -p ${bams_hs2}${suffix} ${analysis_hs2}${suffix}
+    hisat2 -f -x ${f}index -U $infile --threads $CPU --no-spliced-alignment | \
+      samtools view -Shub -F 256 -@ $CPU - | \
+      $sambamba sort -t $CPU -o $outfile /dev/stdin 
+    samtools index -@ $CPU $outfile
+    samtools idxstats -@ $CPU $outfile > "${analysis_hs2}${suffix}/${i%.*}_${suffix}.tsv"
+  done
+done
+
+:' Testing code for loop
+echo "iteration $f vs $i"
+    echo "hs2: $infile --> samtools --> sambamba $outfile --> index it --> idxstats it into ${analysis}${suffix}/${i%.*}_${suffix}.tsv"
+'
+```
+
+# R script to gather analysis ouputs - bowtie2
+```{r, eval=TRUE}
+### Libraries
+library(data.table)
+
+### Defs
+# takes a single tsv file as input and returns a string of tuples where every tuple contains the xsome name and number of mapped reads on it; discounts xsomes where reads = 0 
+read_assigner <- function(input){
+  temp_in <- read.table(file = input, sep = '\t', header = FALSE, 
+                      col.names = c("xsome", "xsome_length", "mapped_reads", "unmapped_reads")) # read file into "dt" 
+  temp_in <- subset(temp_in, mapped_reads != "0" ) # remove rows where reads != 0
+  return(temp_in[,c(1,3)])
+  rm(temp_in)
+}
+
+### Spider .tsv files -----> bowtie2
+# set dir
+analysis_dir <- "~/chipseq/2_variations/analysis_bt2/"
+setwd(analysis_dir)
+# Get a list of paths of all files with the .tsv extension in the current directory and its subdirectories
+tsv_files <- file.path(getwd(), list.files(pattern = "*.tsv", recursive = TRUE))
+
+### Variables
+# init dt for gathering ouputs
+dt_b <- data.table(matrix(ncol = 4, nrow = 0))
+setnames(dt_b, c("iteration","filename","xsome", "mapped_reads"))
+
+### main
+for(file in tsv_files) {
+  temp <- read_assigner(file)
+  filename <- sub(".*/(.*)(\\.tsv)$", "\\1", file) # get filename without extension
+  suffix <- sub("^.*cutout_(.*)", "\\1", filename) # get suffix from filename
+  # Check if the data.table has more than 0 rows
+  if(nrow(temp) > 0) {
+    temp["iteration"] <- suffix
+    temp["filename"] <- filename
+    dt_b <- rbind(dt_b,temp) # not sure if specification is necessary
+  }
+}
+
+write.csv(dt_b, paste(analysis_dir, "output_r_bt2.csv", sep = "", collapse = NULL), row.names=FALSE)
+
+
+```
+
+# R script to gather analysis ouputs - hisat2
+```{r}
+### Libraries
+library(data.table)
+
+### Defs
+# takes a single tsv file as input and returns a string of tuples where every tuple contains the xsome name and number of mapped reads on it; discounts xsomes where reads = 0 
+read_assigner <- function(input){
+  temp_in <- read.table(file = input, sep = '\t', header = FALSE, 
+                      col.names = c("xsome", "xsome_length", "mapped_reads", "unmapped_reads")) # read file into "dt" 
+  temp_in <- subset(temp_in, mapped_reads != "0" ) # remove rows where reads != 0
+  return(temp_in[,c(1,3)])
+  rm(temp_in)
+}
+
+### Spider .tsv files -----> hisat2
+# set dir
+analysis_dir <- "~/chipseq/2_variations/analysis_hs2/"
+setwd(analysis_dir)
+# Get a list of paths of all files with the .tsv extension in the current directory and its subdirectories
+tsv_files <- file.path(getwd(), list.files(pattern = "*.tsv", recursive = TRUE))
+
+### Variables
+# init dt for gathering ouputs
+dt_h <- data.table(matrix(ncol = 4, nrow = 0))
+setnames(dt_h, c("iteration","filename","xsome", "mapped_reads"))
+
+### main
+for(file in tsv_files) {
+  temp <- read_assigner(file)
+  filename <- sub(".*/(.*)(\\.tsv)$", "\\1", file) # get filename without extension
+  suffix <- sub("^.*cutout_(.*)", "\\1", filename) # get suffix from filename
+  # Check if the data.table has more than 0 rows
+  if(nrow(temp) > 0) {
+    temp["iteration"] <- suffix
+    temp["filename"] <- filename
+    dt_h <- rbind(dt_h,temp) # not sure if specification is necessary
+  }
+}
+
+write.csv(dt_h, paste(analysis_dir, "output_r_hs2.csv", sep = "", collapse = NULL), row.names=FALSE)
+```
+
+
+#
+#-----------------------------------------------   Peak Calling   --------------------------------------------------
+
+# MACS3 setup and bookkeeping
+```{bash, eval=TRUE}
+# Checking versions of python prerequisites; could do this in Python, but why not take up the challenge in bash?
+# To make it even better, I'm going to use web scraping using curl and html2text
+mapfile -t MACS3_prerequisites < <(curl -s https://github.com/macs3-project/MACS/blob/master/requirements.txt | html2text | grep -oP '\w+(?=>=)')
+
+echo -e "Are the local versions of Python packages satisfied based on the MACS3 prerequisites on its GitHub?\n"
+for i in ${!MACS3_prerequisites[@]};
+do
+    if [ $i -eq 5 ]; then
+        continue # Skip the 6th element
+    fi
+    package="${MACS3_prerequisites[i]}"
+    if pip freeze | grep -q "${package}"; then
+        echo -e "\e[32m${package} satisfied\e[0m"
+    else
+        echo -e "\e[31m${package} not satisfied\e[0m"
+    fi
+done
+
+python3 -c "import setuptools; print('local setuptools version: ',setuptools.__version__,sep='')" # grep cannot locate setuptools :(
+
+### store setuptools(sut) version
+sut_version=$(curl -s https://github.com/macs3-project/MACS/blob/master/requirements.txt | html2text | grep '>=' | grep 'setuptools')
+
+### write required sut version
+echo "required:$sut_version"
+
+### echo MACS3 version
+echo -e "\nUsing MACS3 version:"
+macs3 --version
+```
+
+*note: could do MACS3 --cutoff-analysis to get an ideal qvalue, but I think this one is alright based on what I saw on IGV for not.
+
+* GREAT: functional enrichment and gene ontology
+* video: https://youtu.be/JYBP5BpRfTM?t=4992 --> this one is web-based
+
+* Homer: find enriched motifs in genomic regions
+* https://youtu.be/JYBP5BpRfTM?t=5811
+
+# hisat2 peak calling with MACS3 (hg38; chm13)
+```{bash, eval=TRUE}
+### source and cd
+source ~/chipseq/shell_variables_ChIP-seq.sh
+cd $bd_1
+
+# make MACS3 directories
+mkdir -p $peaks_hs2_hg38 $peaks_hs2_chm13
+
+# Define the parameters
+samples=("H1299" "PANC1")
+bams=("bams_hs2_hg38" "bams_hs2_chm13")
+peaks=("peaks_hs2_hg38" "peaks_hs2_chm13")
+
+### Loop through samples and bams
+for sample in "${samples[@]}"; do
+  # Init counter i
+  i=0
+  
+  # Start inner loop
+  for bam in "${bams[@]}"; do
+    # Get the files matching the sample
+    mapfile -t files < <(ls -1 "${!bam}" | grep "^${sample}.*.bam$")
+
+    # Call peaks
+    macs3 callpeak -t ${!bam}${files[0]} -c ${!bam}${files[1]} -f BAM -g hs -n $sample -q 0.01 --o ${!peaks[$((i++))]}
+    
+    # Generate PDFs
+    cd "${!peaks[$((i-1))]}"
+    Rscript ${sample}_model.r
+    cd ..
+  done
+done
+```
+
+# bowtie2 peak calling with MACS3 (hg38; chm13)
+```{bash, eval=TRUE}
+### source and cd
+source ~/chipseq/shell_variables_ChIP-seq.sh
+cd $bd_1
+
+# make MACS3 directories
+mkdir -p $peaks_bt2_hg38 $peaks_bt2_chm13
+
+# Define the parameters
+samples=("H1299" "PANC1")
+bams=("bams_bt2_hg38" "bams_bt2_chm13")
+peaks=("peaks_bt2_hg38" "peaks_bt2_chm13")
+
+### Loop through samples and bams
+for sample in "${samples[@]}"; do
+  # Init counter i
+  i=0
+  
+  # Start inner loop
+  for bam in "${bams[@]}"; do
+    # Get the files matching the sample
+    mapfile -t files < <(ls -1 "${!bam}" | grep "^${sample}.*.bam$")
+
+    # Call peaks
+    macs3 callpeak -t ${!bam}${files[0]} -c ${!bam}${files[1]} -f BAM -g hs -n $sample -q 0.01 --o ${!peaks[$((i++))]}
+    
+    # Generate PDFs
+    cd "${!peaks[$((i-1))]}"
+    Rscript ${sample}_model.r
+    cd ..
+  done
+done
+
+### Leaving the old version in for troubleshooting purposes
+:'#setup
+source ~/chipseq/shell_variables_ChIP-seq.sh
+cd ~/chipseq/experiment/
+
+# variables
+bams_hg38="./BAM_ChIP-seq_BT2_hg38/"
+bams_chm13="./BAM_ChIP-seq_BT2_chm13/"
+peaks_hg38="./MACS3_bt2_hg38/"
+peaks_chm13="./MACS3_bt2_chm13/"
+
+# make MACS3 directories
+mkdir "$peaks_hg38"
+mkdir "$peaks_chm13"
+
+# grepping
+mapfile -t H1299_hg38 < <(ls -1 "${bams_hg38}" | grep "^H1299.*.bam$")
+mapfile -t PANC1_hg38 < <(ls -1 "${bams_hg38}" | grep "^PANC1.*.bam$")
+mapfile -t H1299_chm13 < <(ls -1 "${bams_chm13}" | grep "^H1299.*.bam$")
+mapfile -t PANC1_chm13 < <(ls -1 "${bams_chm13}" | grep "^PANC1.*.bam$")
+
+# Peak calling; -B extends read in both directions (broad region calling), -q is qvalue; default = 0.05 (0.01 = pretty stringent)
+macs3 callpeak -t ${bams_hg38}"${H1299_hg38[0]}" -c ${bams_hg38}"${H1299_hg38[1]}" -f BAM -g hs -n H1299 -q 0.01 --o "${peaks_hg38}"
+macs3 callpeak -t ${bams_hg38}"${PANC1_hg38[0]}" -c ${bams_hg38}"${PANC1_hg38[1]}" -f BAM -g hs -n PANC1 -q 0.01 --o "${peaks_hg38}"
+macs3 callpeak -t ${bams_chm13}"${H1299_chm13[0]}" -c ${bams_chm13}"${H1299_chm13[1]}" -f BAM -g hs -n H1299 -q 0.01 --o "${peaks_chm13}"
+macs3 callpeak -t ${bams_chm13}"${PANC1_chm13[0]}" -c ${bams_chm13}"${PANC1_chm13[1]}" -f BAM -g hs -n PANC1 -q 0.01 --o "${peaks_chm13}"
+
+# Generate PDFs from models using Rscript
+cd "${peaks_hg38}"
+Rscript H1299_model.r
+Rscript PANC1_model.r
+cd "../${peaks_chm13}"
+Rscript H1299_model.r
+Rscript PANC1_model.r'
+```
+
+# minimap2 peak calling with MACS3 (hg38; chm13)
+```{bash, eval=TRUE}
+### source and cd
+source ~/chipseq/shell_variables_ChIP-seq.sh
+cd $bd_1
+
+# make MACS3 directories
+mkdir -p $peaks_mm2_hg38 $peaks_mm2_chm13
+
+# Define the parameters
+samples=("H1299" "PANC1")
+bams=("bams_mm2_hg38" "bams_mm2_chm13")
+peaks=("peaks_mm2_hg38" "peaks_mm2_chm13")
+
+### Loop through samples and bams
+for sample in "${samples[@]}"; do
+  # Init counter i
+  i=0
+  
+  # Start inner loop
+  for bam in "${bams[@]}"; do
+    # Get the files matching the sample
+    mapfile -t files < <(ls -1 "${!bam}" | grep "^${sample}.*.bam$")
+
+    # Call peaks
+    macs3 callpeak -t ${!bam}${files[0]} -c ${!bam}${files[1]} -f BAM -g hs -n $sample -q 0.01 --o ${!peaks[$((i++))]}
+    
+    # Generate PDFs
+    cd "${!peaks[$((i-1))]}"
+    Rscript ${sample}_model.r
+    cd ..
+  done
+done
+```
+
+
+#
+#------------------------------------------------   Putting it all together  ---------------------------------------------------
+
+# Manual capture and annotation of MACS3 results
+
+```{bash, eval=TRUE}
+# Creating a bash converter for my MACS3-generated files: it would appear that MACS3 saves files as .xml with a .xls extension.
+
+# Specify the directory to check for folders starting with "MACS3"
+dir="$HOME/chipseq/1_experiment"
+
+# Find all folders starting with "MACS3"
+folders=$(find $dir -type d -name "MACS3*")
+
+# Loop through each folder
+for folder in $folders
+do
+  for file in $(find $folder -name "*PANC1*.xls" -o -name "*H1299*.xls") # Find all .xml files containing "PANC1" or "H1299" in the folder
+  do
+    libreoffice --headless --convert-to csv "$file" --outdir "$(dirname "$file")"
+  done
+done
+```
+
+```{r, eval=TRUE}
+# Prepare objects 
+
+### Libraries
+library(data.table)
+
+### Variables
+MYTABLE <- data.table(matrix(ncol = 6, nrow = 0)) # data.table containing summary of all MACS3 outputs
+setnames(MYTABLE, c("chr", "length", "abs_summit", "fold_enrichment", "-log10(qvalue)", "score")) # Rename columns to match MACS3 outputs
+setkey(MYTABLE, chr)
+obj_list <- list()
+
+### Check directory for MACS3 analysis output folders (i.e. starting with "MACS3")
+MACSdirs <- dir("~/chipseq/experiment", pattern = "^MACS3", full.names = TRUE)
+dir.info <- file.info(MACSdirs)
+MACSdirs <- MACSdirs[dir.info$isdir]
+
+### Create objects
+for(i in 1:length(MACSdirs)){
+  setwd(MACSdirs[i]) # Index each MACS3 analysis folder
+  files <- list.files(pattern = ".*(PANC1|H1299).*.csv") # Load .xls files containing "PANC1" and "H1299".
+  for(file in files){
+    obj_temp <- read.csv2(file, sep = "\t", header = F, skip = 29)
+    names(obj_temp) <- obj_temp[1, ] # set 1st row as header
+    obj_temp <- obj_temp[-1, c(1,4,5,8,9)] # remove 1st row and unneeded columns (p value, exact locations, and other junk)
+    obj_temp[,c(2,3,4,5)] <- as.numeric(unlist(obj_temp[,c(2,3,4,5)])) # convert to numeric
+    obj_name <- paste0(gsub("^MACS3_","",MACSdirs[i]), "_", gsub("\\_peaks.csv$", "", basename(file)))
+    obj <- data.table(obj_temp, keep.rownames = FALSE)
+    assign(obj_name, obj)
+    obj_list[[length(obj_list) + 1]] <- obj_name
+  }
+  setwd("..")
+}
+
+### Cleanup
+rm(obj_temp, obj_name, obj, file, files, i, MACSdirs) # remove unneeded variables left over from
+
+### Create new table summarising the results of all of the previously-generated data.table objects
+## def overlap checker
+check_overlap <- function(X, MYTABLE, n) {
+  matches <- MYTABLE[chr == X$chr & abs(abs_summit - X$abs_summit) < n,] 
+  found_match <- FALSE # flag to check if a match was found
+  if (nrow(matches) > 0) {
+    for (i in 1:nrow(matches)) {
+      MYTABLE[matches[i], score := score + 1, on = "chr"]
+      MYTABLE[matches[i], fold_enrichment := fold_enrichment + X$fold_enrichment, on = "chr"]
+      MYTABLE[matches[i], `-log10(qvalue)` := `-log10(qvalue)` + X$`-log10(qvalue)`, on = "chr"]
+      found_match <- TRUE # set flag to True if a match was found
+    }
+  }
+  if (!found_match) {
+    MYTABLE <- rbind(MYTABLE, X)
+  }
+  return(MYTABLE)
+}
+
+# Loop over all objects and add their contents to MYTABLE_hg38
+for (object_name in obj_list[grep("hg38", obj_list)]) {
+  object <- get(object_name)
+  object[, score := 1] # Add a "score" column to the object
+  for (i in 1:nrow(object)) { # Loop over rows in the object and add them to MYTABLE
+    row <- object[i, ]
+    MYTABLE <- check_overlap(row, MYTABLE, n = 5000)
+  }
+}
+MYTABLE_hg38 <- MYTABLE
+# average out the q value and folds
+for(row in 1:nrow(MYTABLE)) {
+  MYTABLE_hg38[row, fold_enrichment := fold_enrichment/score]
+  MYTABLE_hg38[row, `-log10(qvalue)` := `-log10(qvalue)`/score] 
+}
+MYTABLE <- MYTABLE[0,] # initiates MYTABLE back to default
+
+# Loop over all objects and add their contents to MYTABLE_chm13
+for (object_name in obj_list[grep("chm13", obj_list)]) {
+  object <- get(object_name)
+  object[, score := 1] # Add a "score" column to the object
+  for (i in 1:nrow(object)) { # Loop over rows in the object and add them to MYTABLE
+    row <- object[i, ]
+    MYTABLE <- check_overlap(row, MYTABLE, n = 5000)
+  }
+}
+MYTABLE_chm13 <- MYTABLE
+for(row in 1:nrow(MYTABLE)) {
+  MYTABLE_chm13[row, fold_enrichment := fold_enrichment/score]
+  MYTABLE_chm13[row, `-log10(qvalue)` := `-log10(qvalue)`/score] 
+}
+MYTABLE <- MYTABLE[0,] # initiates MYTABLE back to default
+
+
+# View the final result
+#View(MYTABLE)
+
+### cut out the rows that have a score lower than "1" and save the resulting object
+fwrite(MYTABLE_hg38[score > 1], "MACS3_summary_hg38.csv")
+fwrite(MYTABLE_chm13[score > 1], "MACS3_summary_chm13.csv")
+```
+
+# R session info
+```{r}
+sessionInfo()
+```
