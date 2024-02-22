@@ -1,0 +1,377 @@
+---
+title: "Peptide fraction analyser"
+author: "Tomáš Marťák"
+date: "22.05.2023"
+output:
+  rmdformats::downcute:
+    df_print: paged
+    code_folding: hide
+    toc: 3
+---
+
+What these chunks do:
+1.
+- Spider through .mzid files generated using MS-GF+ MzMLs and 3 various manually-generated protein databases (hp - Uniprot's Human proteome + contaminants; hpsp - like before, but extended by SwissProt predicted proteins from TrEMBL; top5 - contaminants and a smaller number of manually-curated proteins only - used to maximise fragments seen at the cost of abysmal q values).
+- Subset the .mzid files based on seleced protein(s), convert to tabular format.
+
+2.
+Plot the fractions spotted for the protein of interest as a static and dynamic plot. Fragments are coloured by q value.
+
+3.
+Same as above, but only the static version; designed to run using a list of proteins as a batch, and has more informative graph titles this time.
+
+
+
+# 1. Prep data - Read MZIDs, subset based on selected protein    
+!!! Has a MAJOR memory leak (probably PSMatch, but cannot - i.e. don't want to - replace it due to its speed) !!!
+
+```{r mzid_to_proteinID_subset, message=FALSE, warning=FALSE, error=FALSE, eval=FALSE}
+### Setup
+## libraries
+library("dplyr")
+library("PSMatch")
+library("data.table")
+library("stringr")
+library("conflicted")
+library("magrittr")
+
+## Source vars
+flag <- "exists" # pop flag for source - vars only from source, no script
+source("~/Documents/MS/scripts/r_variables_MS.R")
+
+# output dir
+outdir <- paste0(bda, "mzid_protein_subsets/")
+
+## Spider .mzid files
+mzid_files <- list.files(path = mzid_dir, pattern = "\\.mzid$", recursive = TRUE, full.names = TRUE) %>%
+    grep("hpsp|hp|top5", ., value = T) 
+
+### Functions
+## Function: extract names of files (default pattern given; kept longer > + regex readability)
+get_object_name <- function(file, pattern = "mzid/{1,2}(.*?)/(.*?)/.*(\\d{1})_2uL") {
+    # extract name parts of interests with pattern
+    name_parts <- str_match(string = file, pattern = pattern)[2:4]
+    
+    # setup name for this particular object
+    object_name <- paste("id", name_parts[1], name_parts[2], name_parts[3], sep = "_")
+    
+    # return it
+    return(object_name)
+}
+
+## Function: create a subset from the given file based on protein IDs in a list/dictionary
+file_to_subset <- function(file, protein_list, object_name) {
+    # # toy data
+    # file <- mzid_files[1]
+    # protein_list <- protein_list
+    
+    # generate temporary psm subset
+    temp_psm <- readPSMs(file) %>% # load file into PSM obj based on file
+        as_tibble() %>%  # conversion into tibble necessary to avoid errors
+        setDT() %>%  # convert to more memory-efficient data.table
+        .[isDecoy == FALSE & rank == 1] %>%
+        .[grep(x =  DatabaseAccess, pattern = paste(names(protein_list), collapse = "|"))] %>%
+        .[, experiment_id := object_name]
+    
+    # break if number of columns is not 37 (not 36 due to adding object_name)
+    if(ncol(temp_psm) != 37) stop("Incorrect number of columns; this is a problem in the 'file_to_subset' function definition.")
+    
+    # # break if no matches were found in the file
+    # if(nrow(temp_psm) == 0) stop(paste0("There are no matches for ", protein_id, " in", file, "; this is a problem in the 'file_to_subset' function definition."))
+    
+    # return it
+    return(temp_psm)
+}
+
+
+### Main - create subsets of mzid files containing only peptides matching the given UniProt protein ID; return these as a list
+subset_by_protein <- function(paths, protein_list, outdir) {
+    # prepare list of pre-defined length (increases speed) to load outputs into
+    output_table <- data.table()
+    
+    # extract names of mzid files into a list 
+    object_name_list <- lapply(X = paths, FUN = get_object_name)
+    
+    # setup progress bar
+    progress_bar = txtProgressBar(min = 0, max = length(paths), initial = 0, style = 3) 
+    
+    # make loop
+    for (i in seq_along(paths)) {
+        # update progress bar; placed here to sidestep any messages
+        setTxtProgressBar(pb = progress_bar, value = i)
+        
+        # add to output table
+        output_table <- rbindlist(list(output_table,
+                                       file_to_subset(file = paths[[i]],
+                                                      protein_list = protein_list,
+                                                      object_name = object_name_list[[i]])),
+                                  use.names = TRUE)
+    }
+    # close progress bar
+    close(progress_bar)
+    
+    # create analysis directory output if it doesn't exist yet
+    if (!dir.exists(outdir)) dir.create(outdir)
+    
+    # store final table as csv in analysis directory
+    cat("Saving files into analysis directory...\n")
+    fwrite(x = output_table, file = paste0(outdir, "peptides_matching-with-protein-hits.csv"), showProgress = FALSE)
+    cat("Finished!\n\n~ ~ ~\n")
+}
+
+## setup list of proteins of interest
+protein_list <- list (
+
+    # INSERT UniProt IDs of Proteins of interest here
+    
+)
+
+# run subsetter
+subset_by_protein(paths = mzid_files, protein_list = protein_list, outdir = outdir)
+
+.rs.restartR()
+```
+
+
+# 2. Graphs - Protein-of-interest peptides {.tabset .tabset-fade .tabset-pills}
+
+## 2.1 Graph 1 (static): comparing pdbs used and master experiments
+Note: caution, run manually until tsvs are used instead. There is a major memory leak in this script. 
+
+```{r proteinID_subset_to_peptides, message=FALSE, warning=FALSE}
+### Problem!!! Memory leak! It may be worth it converting all mzid files to tsvs and using those instead.
+### Alternatively, you can limit the memory used by R.
+
+### Setup
+## libraries
+library("data.table")
+library("stringr")
+library("conflicted")
+library("ggplot2")
+library("plotly")
+
+## Spider subsets
+protein_subset_files <- list.files(path = paste0(bda, "mzid_protein_subsets"), pattern = "\\.csv$", recursive = TRUE, full.names = TRUE)
+
+
+## Load dataset for jun (control) and Protein-of-interest (experiment)
+format_pdt_for_plot <- function(filepath){
+   # load file of interest into temporary object
+   temp_dt <- fread(filepath, sep = ",")[,c(1,13,14,16,28,37)]
+   
+   # define local pattern for extracting protein info and capture 
+   pattern_dataset_info <- "id_(hpsp|hp|top5)_(.+)_(\\d)"
+   
+   # format to prepare for plotting
+   captures <- str_match(temp_dt$experiment_id, pattern_dataset_info)
+   temp_dt[, c("pdb", "master", "sub") := .(captures[, 2], captures[, 3], as.numeric(captures[, 4]))] # split experiment_id into informative columns
+   setnames(temp_dt, old = c("DBseqLength","MS.GF.QValue"), new = c("protlength","qvalue")) # rename qvalue
+   temp_dt[,score := -log(qvalue)] # create score, which is a -log10 transform of the qvalue, for colouring in ggplot 
+   temp_dt$score[temp_dt$score == Inf] <- 10 # replace all inf values with 10
+   temp_dt$score <- temp_dt$score - (-log(0.05)) # substract -log10 q value cutoff so that passing values >=0, and those not passing <0
+   temp_dt <- temp_dt[order(experiment_id)][ # sort by experiment_id
+      , counter := seq_len(.N), by = experiment_id] # add a counter column to act as a y axis locator
+
+   # return the preformatted data table
+   return(temp_dt)
+}
+
+protein <- "INSERT protein-of-interest UniProt ID Here"
+temp_dt <- format_pdt_for_plot(filepath = protein_subset_files[grep(protein, protein_subset_files)])
+
+# Add descriptors for y labels
+temp_dt[master != "plk99", 
+        information := str_replace_all(as.character(sub), c("^1$" = "w/o prot. K, rep 1",
+                                                            "^2$" = "w/o prot. K, rep 2",
+                                                            "^3$" = "with prot. K, rep 1",
+                                                            "^4$" = "with prot. K, rep 2",
+                                                            "^5$" = "IgG control"))]
+temp_dt[master == "plk99", 
+        information := str_replace_all(sub, c("^1$" = "H1299, rep1",
+                                              "^2$" = "H1299, rep2",
+                                              "^3$" = "Panc1, rep1",
+                                              "^4$" = "Panc1, rep2"))]
+
+
+temp_dt <- as.data.frame(temp_dt)
+# ggplot
+TPBG_plot <- ggplot(temp_dt, aes(x = start, y = sub)) +
+    geom_rect(temp_dt, mapping = aes(xmin = start, xmax = end,
+                                     ymin = sub - 0.2, ymax = sub + 0.2,
+                                     fill = score),
+              color = "black", size = 0.15) + # plot rectangles
+    scale_fill_gradient2(low = "red", mid = "yellow", high = "green", name = "Score")+  # Color scale settings
+    geom_vline(xintercept = c(250,300), linetype = "dashed", color = "pink", linewidth = .2) + # add lines to indicate transmembrane domain
+    annotate("rect",xmin = 350, xmax = 370, ymin = -Inf, ymax = Inf, fill = "pink", alpha = 0.3) +
+    facet_grid(pdb ~ master) +
+    xlab("Protein-of-interest index (N to C terminal)") +
+    ylab("Sub-experiment number") +
+    ggtitle("Protein-of-interest fragment peptides found in H1299/Panc1 nuclei.") +
+    theme_dark() + # add lovely dark theme
+    theme(plot.title = element_text(hjust = 0.5)) 
+
+ggsave(filename = paste0(bd, "img/peptide_fractions/Protein-of-interest.png"), plot = TPBG_plot, width = 8, height = 6, units = "in")
+```
+
+It's taking too long to figure out how to change axis labels in R itself. While I would gladly spend a few days behind my laptop to figure out the intricacies of the magic behind why R doesn't work the way I want it to, it will be much easier for me to simply describe what labels mean here in the interest of time. It would probably take me the better part of a whole day to figure out how to facet plots in such a way that I could add custom x labels in each facet. See the interactive plot (next section) for better information: if you hover your cursor over the rectangles, all information needed will be revealed to you.
+
+-   X axis: the index of the protein. 0 = N-terminal, 420 = C-terminal.
+-   Y axis:
+    -   **plk89/FAIMS: 1 & 2**: samples were obtained via an anti-Protein-of-interest IP of the nuclear fraction of H1299 cells. **Without** proteinase K.
+
+    -   **plk89/FAIMS: 3 & 4**: samples were obtained via an anti-Protein-of-interest IP of the nuclear fraction of H1299 cells. **With** proteinase K.
+
+    -   **plk89/FAIMS: 5**: samples were obtained via an anti-IgG IP of the nuclear fraction of H1299 cells. **Control sample**.
+
+    -   **plk99: 1 & 2**: samples were obtained from the total nuclear fraction of H1299 cells.
+
+    -   **plk99: 3 & 4**: samples were obtained from the total nuclear fraction of Panc1 cells.
+-   The shaded area indicates the transmembrane domain of Protein-of-interest. The area to the left is therefore the extracellular domain, the are to the right the intracellular domain.
+-   Protein databases used (**hpsp, hp, top5**):
+    -   **hp** - whole human proteome from UniProt (SwissProt + TrEMBL) + contaminants (cRAP and Mycoplasma)
+    -   **top5** - 5 hits from anti-Protein-of-interest ChIP-seq (with isoforms) + contaminants (cRAP and Mycoplasma)
+
+## 2.2 Graph 2 (interactive): comparing pdbs used and master experiments
+
+```{r, warning=FALSE}
+# ggplot
+plot <- ggplot(temp_dt, aes(x = start, y = sub)) +
+   geom_rect(temp_dt, mapping = aes(xmin = start, xmax = end,
+                                    ymin = sub - 0.2, ymax = sub + 0.2,
+                                    fill = score,
+                                    text = paste0("Dataset: ", master, "\nPeptide sequence: ", sequence,  
+                                                  "\nqvalue: ", round(qvalue, 3), "\nDetails: ", information)),
+             color = "black", size = 0.15) + # plot rectangles
+   scale_fill_gradient2(low = "red", mid = "yellow", high = "green", name = "Score")+  # Color scale settings
+   geom_vline(xintercept = c(356, 376), linetype = "dashed", color = "pink", linewidth = .2) + # add lines to indicate transmembrane domain
+   facet_grid(pdb ~ master) +
+   xlab("Protein-of-interest index (N to C terminal)") +
+   ylab("Sub-experiment number") +
+   theme_dark() + # add lovely dark theme
+   theme(legend.position = "none")
+
+ggplotly(plot, tooltip = "text", hover = score)
+```
+
+On scores: scores are -log10 transformed q values (I used a q value cutoff of 0.05, or 5% for the purposes of colouring this plot). Q values were obtained by comparing the mapping of any given peptide sequence to proteins in the protein database and dividing this by mapping to decoy (reversed) protein sequences - this is also called the False Discovery Rate (FDR). This basically means that, in this plot, peptides that are indicated as orange have a chance lower than 95% that they actually belong to Protein-of-interest and not another protein. Then again, I believe that 5% is a better cutoff than 1%, which showed a lot of peptides as completely red.
+
+**My interpretation**:
+
+-   **All of Protein-of-interest seems to be present in the nucleus**: when comparing plk89 (IP) no proteinase K (1 & 2) and proteinase K (3 & 4) with plk99 (no IP), it is apparent that the whole Protein-of-interest protein is found in the nucleus.
+
+-   **There seems to be no large difference between H1299 and Panc1 cells**. One might argue that peptides in Protein-of-interest~150-250~ aren't present, but then again, the quantity of the peptides is so low that that might just be an underrepresentation.
+
+-   **Proteinase K treatment worked**: there is a clear difference between plk89/FAIMS 1 & 2 (no proteinase K) and 3 & 4 (with proteinase K). The extracellular domain is mostly or completely gone.
+
+-   **Doing a anti-Protein-of-interest IP isn't worth the trouble**: there is no improvement over the amount of high-quality peptides detected in the IP (plk89) vs the non-IP/raw nuclear fraction (plk99) datasets.
+
+-   **Performing FAIMS didn't help**: although running FAIMS seems to be best practice for unclear proteins, it did result in noticeably less peptides being available.
+
+
+# 3. Graphs - all - Used for batch comparison of proteins
+```{r MS_hits, message=FALSE, warning=FALSE}
+### Problem!!! Memory leak! It may be worth it converting all mzid files to tsvs and using those instead.
+### Alternatively, you can limit the memory used by R.
+
+### Setup
+## libraries
+library("data.table")
+library("stringr")
+library("conflicted")
+library("ggplot2")
+library("plotly")
+library("magrittr")
+library("gridExtra")
+
+## Source vars
+flag <- "exists" # pop flag for source - vars only, no script
+source("~/Documents/MS/scripts/r_variables_MS.R")
+
+# infile with proteins
+infile <- paste0(bda, "mzid_protein_subsets/peptides_matching-with-protein-hits.csv")
+
+# init protein dict for MS hits
+protein_list <- list (
+   # INSERT Protein of interest list here
+)
+
+## Load dataset for jun (control) and Protein-of-interest (experiment)
+format_pdt_for_plot <- function(filepath) {
+    # load file of interest into temporary object
+    temp_dt <- fread(infile, sep = ",")[,c(1,13,14,15,16,28,37)]
+   
+    # define local pattern for extracting protein info and capture 
+    pattern_dataset_info <- "id_hpsp_(.+)_(\\d)"
+    
+    # format to prepare for plotting
+    captures <- str_match(temp_dt$experiment_id, pattern_dataset_info)
+    temp_dt[, c("master", "sub") := .(captures[, 2], as.numeric(captures[, 3]))] # split experiment_id into informative columns
+    setnames(temp_dt, old = c("DBseqLength","MS.GF.QValue"), new = c("protlength","qvalue")) # rename qvalue
+    temp_dt[, score := -log(qvalue)] # create score, which is a -log10 transform of the qvalue, for colouring in ggplot 
+    temp_dt$score[temp_dt$score == Inf] <- 10 # replace all inf values with 10
+    temp_dt$score <- temp_dt$score - (-log(0.05)) # substract -log10 q value cutoff so that passing values >=0, and those not passing <0
+    temp_dt <- temp_dt[order(experiment_id)][ # sort by experiment_id
+        , counter := seq_len(.N), by = experiment_id] # add a counter column to act as a y axis locator
+    
+    # Add descriptors for y labels
+    temp_dt[master != "plk99", 
+            information := str_replace_all(as.character(sub), c("^1$" = "w/o prot. K, rep 1",
+                                                                "^2$" = "w/o prot. K, rep 2",
+                                                                "^3$" = "with prot. K, rep 1",
+                                                                "^4$" = "with prot. K, rep 2",
+                                                                "^5$" = "IgG control"))]
+    temp_dt[master == "plk99", 
+            information := str_replace_all(sub, c("^1$" = "H1299, rep1",
+                                                  "^2$" = "H1299, rep2",
+                                                  "^3$" = "Panc1, rep1",
+                                                  "^4$" = "Panc1, rep2"))]
+    
+    # return the preformatted data table
+    return(temp_dt)
+}
+
+# run script
+plot_dt <- format_pdt_for_plot(filepath = infile)
+
+
+# ggplot
+for (protein in unique(plot_dt$DatabaseAccess)) {
+    if(file.exists(paste0(bd, "img/peptide_fractions/", protein, ".png"))) next
+    plotlist <- list()
+    
+    for (experiment in unique(plot_dt$master)) {
+        
+        # load data table
+        temp_dt <- plot_dt[DatabaseAccess == protein & master == experiment]
+
+        # prep y labels
+        y_labs <- unique(temp_dt$information)
+        
+        # make plot
+        temp_plot <- ggplot(temp_dt, aes(x = start, y = sub)) +
+            geom_rect(temp_dt, mapping = aes(xmin = start, xmax = end,
+                                                ymin = sub - 0.2, ymax = sub + 0.2,
+                                                fill = score),
+                      color = "black", size = 0.15) + # plot rectangles
+            scale_fill_gradient2(low = "red", mid = "yellow", high = "green", name = "Score") +  # Color scale settings
+            xlab(paste0(protein," index (N to C terminal)")) +
+            ylab(temp_dt$master) +
+            ggtitle(paste0(protein," fragment peptides found in nuclei of", 
+                           ifelse(test = experiment == "plk99", yes = " H1299/Panc1 lysates", no = " H1299 IPs"),".")) +
+            scale_y_continuous(breaks = seq_along(y_labs), labels = y_labs) + # add custom y tick labels
+            theme_dark() + # add lovely dark theme
+            theme(plot.title = element_text(hjust = 0.5, size = 10, face = 'bold'),
+                  axis.title = element_text(size = 8),
+                  legend.key.size = unit(5, 'mm')) 
+        
+        # plotlist append
+        plotlist[[experiment]] <- temp_plot
+    }
+    combined_grob <- gridExtra::arrangeGrob(grobs = plotlist)
+    temp_plot <- grid.arrange(combined_grob, ncol = 1, 
+                              top = paste0(protein," fragment peptides found in nuclei of H1299/Panc1 lysates/IPs."),
+                              heights = 4)
+    ggsave(filename = paste0(bd, "img/peptide_fractions/", protein, ".png"), plot = temp_plot, width = 8, height = 6, units = "in")
+}
+```
+

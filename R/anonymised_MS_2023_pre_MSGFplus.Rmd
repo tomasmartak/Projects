@@ -1,0 +1,360 @@
+---
+title: "MS analysis - annotation and pre-processing"
+author: "Tomáš Marťák"
+date: "02.05.2023"
+output:
+  rmdformats::downcute:
+	df_print: paged
+	code_folding: hide
+	toc: 3
+---
+Description:
+The point of these chunks is to generate MS-GF+ based .mzml files. I've read that these can be more sensitive than MaxQuant and can return a larger number of fractions/peptides.
+
+Notes: - Acquisition type is as follows - for plk-89: LC-MS/MS (DDA) / also w/ FAIMS, on same samples - for plk-99: LC-MS/MS (DDA) - The .txt files received were generated using MaxQuant/Andromeda
+
+# 1. Reprobing with MS-GF+ {.tabset .tabset-fade .tabset-pills}
+
+## 1.1 Make mzML files from any ThermoFisher "raw" files
+
+```{bash, eval=FALSE, engine=bash, echo=FALSE}
+### Setup
+## Source
+source ~/Documents/MS/scripts/shell_variables_MS.sh
+
+## Define in/outdirs
+rawlist=($raw_plk89 $raw_plk89F $raw_plk99)
+outlist=($mzml_plk89 $mzml_plk89F $mzml_plk99)
+
+## Makedirs
+mkdir -p $mzml_plk89 $mzml_plk89F $mzml_plk99
+
+## Get verions
+echo "ThermoRawFileParser.exe version:"
+mono $thermoRFP --version
+
+
+### Make mzML files for LC-MS/MS output with ThermoRawFileParser
+# format=2: indexed mzML spectra file; metadata=1: .txt metadata file for raw input
+for i in {0..2}; do # setup indexer
+	if [ -z "$(ls -A ${outlist[i]})" ]; then # check if output directory is empty; if not, skip
+  	mono $thermoRFP --input_directory=${rawlist[i]} --output=${outlist[i]} \
+                  	--format=2 --metadata=1 --noPeakPicking
+  	else
+  	echo -e "\nSkipping conversion of ${rawlist[i]} - file already exists."
+  	
+	fi
+done
+```
+
+## 1.2 Use MS-GF+ to index protein database files
+
+Note: protein database files were generated in three flavours: 
+    - Proteins from genes identified as peaks in the previous ChIP-seq experiment (i.e. Top5 and contaminants) - top5 
+    - Proteins from whole human proteome (UniProt and contaminants only) - hp
+    - Proteins from whole human proteome plus experimental ones (UniProt and contaminants; SwissProt & TrEMBL) - hpsp
+
+In both cases, protein sequences were accessed on UniProt (either manually or through Galaxy). Both databases were generated through Galaxy by combining them with contaminants (cRAP database and 5 Mycoplasma proteomes). This was followed by creating decoy databases. See the README file in ~/Documents/MS/pdb/fasta for more details.
+
+```{bash, eval=FALSE, engine="bash", echo=FALSE}
+### Setup
+## Source
+source ~/Documents/MS/scripts/shell_variables_MS.sh
+
+### Create new decoy database and index databases; output = same as -d by default
+## top5
+java $JRAM -cp $msgfplus edu.ucsd.msjava.msdbsearch.BuildSA \
+    	-d $pdb_top5 \
+    	-tda 0 # tda 0 indexes the database in question
+   	 
+## hp
+java $JRAM -cp $msgfplus edu.ucsd.msjava.msdbsearch.BuildSA \
+    	-d $pdb_hp \
+    	-tda 0
+   	 
+## hp swissprot
+java $JRAM -cp $msgfplus edu.ucsd.msjava.msdbsearch.BuildSA \
+    	-d $pdb_hpsp \
+    	-tda 0
+```
+
+## 1.3 Use MSGF+ to do peptide mapping
+
+Note: by default, this runs with a minimum of 10 peaks per spectra, cutting off anything below that. I might want to fiddle around with this setting later at some point.
+
+```{bash, eval=FALSE, engine="bash", echo=FALSE}
+### Setup
+## Source
+source ~/Documents/MS/scripts/shell_variables_MS.sh
+
+## Variables
+ScanDirList=($mzml_plk89 $mzml_plk89F $mzml_plk99)
+outlist_top5=($mzid_plk89_top5 $mzid_plk89F_top5 $mzid_plk99_top5)
+outlist_hp=($mzid_plk89_hp $mzid_plk89F_hp $mzid_plk99_hp)
+outlist_hpsp=($mzid_plk89_hpsp $mzid_plk89F_hpsp $mzid_plk99_hpsp)
+
+## Mkdirs
+mkdir -p ${outlist_top5[@]} ${outlist_hp[@]} ${outlist_hpsp[@]}
+
+### Mapping
+for i in {0..2}; do # setup indexer
+	scanList=( $(find ${ScanDirList[i]} -name "*.mzML" -type f) ) # grab filepaths of current spectral scan files
+    
+	# for each spectral scan
+	for scan in ${scanList[@]}; do
+    	base=$(basename "${scan}" | cut -d. -f1) # remove extension after 1st occurrence (-f1) of dot (-d.)
+   	 
+    	# run msgfplus on sans/top5 if directory is empty
+    	if [ ! -e "${outlist_top5[i]}${base}_top5.mzid" ]; then # only run if the output file doesn't already exist
+        	# s: spectrum file; d: protein database; o: output; inst 1: instrumentID for Orbitrap; -t: precursor mass tolerance , -ti: isotope error range; -tda 1: generate a new reverse decoy database, -decoy: decoy prefix (XXX: default)
+        	java $JRAM -jar $msgfplus -s $scan -d $pdb_top5 -o ${outlist_top5[i]}${base}_top5.mzid \
+                                  	-thread $CPU -inst 1 -t 20ppm -ti -1,2 -tda 1
+    	fi   	 
+   	 
+    	# run msgfplus on hp if directory is empty
+    	if [ ! -e "${outlist_hp[i]}${base}_hp.mzid" ]; then
+        	java $JRAM -jar $msgfplus -s $scan -d $pdb_hp -o ${outlist_hp[i]}${base}_hp.mzid \
+                                  	-thread $CPU -inst 1 -t 20ppm -ti -1,2 -tda 1
+    	fi
+   	 
+    	# run msgfplus on hpsp if directory is empty
+    	if [ ! -e "${outlist_hpsp[i]}${base}_hpsp.mzid" ]; then
+        	java $JRAM -jar $msgfplus -s $scan -d $pdb_hpsp -o ${outlist_hpsp[i]}${base}_hpsp.mzid \
+                                  	-thread $CPU -inst 1 -t 20ppm -ti -1,2 -tda 1
+    	fi
+	done
+done
+```
+
+
+# 2. Convert MZID files to more usable .tsv files {.tabset .tabset-fade .tabset-pills}
+## 2.1 Convert mzid files to tsv
+Note: !!! Has a MAJOR memory leak (probably PSMatch, but cannot - i.e. don't want to - replace it due to its speed) !!!
+```{r mzid_to_tsv, eval=FALSE}
+### Setup
+##Libraries
+### Setup
+##Libraries
+library("PSMatch")
+library("tibble")
+library("ps")
+library("magrittr")
+
+## vars
+stop <- F
+counter <- 0
+available_memory <- ps_system_memory()$avail/(1024^3)
+
+## source
+flag <- "set"
+source("~/Documents/MS/scripts/r_variables_MS.R")
+
+## setup mzid list (not top5 --> not useful)
+mzid_files <- c(list.files(path = paste0(mzid_dir, "hpsp"), pattern = "\\.mzid$", recursive = TRUE, full.names = TRUE),
+            	list.files(path = paste0(mzid_dir, "hp"), pattern = "\\.mzid$", recursive = TRUE, full.names = TRUE),
+                list.files(path = paste0(mzid_dir, "top5"), pattern = "\\.mzid$", recursive = TRUE, full.names = TRUE))
+
+## PSM_to_tsv 
+while(available_memory > 0.5) {
+    overwrite <- F
+    for (file in mzid_files) {
+        # # toy data
+        # file <- mzid_files[1]
+        paste(file)
+        # setup progress tracker
+        if (counter == 0) {
+            cat("start", strrep(".", length(mzid_files) - 6), "stop\n", sep = "")
+            cat("|", strrep(" ", length(mzid_files) - 2),"|\n", sep = "")
+        }
+        
+        # grab name of infile
+        filename <- sub(pattern = "(.*)\\..*$", replacement = "\\1", file) # gets filename (sans extension)
+        
+        # skip already existing, track progress
+        if (file.exists(paste0(sub(pattern = "(.*)\\..*$", replacement = "\\1", file), ".tsv")) & overwrite == F) {
+            counter = counter + 1
+            cat("*")
+            next
+        }
+        
+        # generate temporary psm subset: convert mzid's into tsv
+        temp_psm <- readPSMs(file) %>% # load file into PSM obj based on index i
+            as_tibble()  # conversion into tibble necessary to avoid errors 
+        
+        # write the cleaned up dt; saves into the same dir as the OG file
+        readr::write_tsv(temp_psm, file = paste0(filename, ".tsv"))
+        
+        # iterate counter
+        counter = counter + 1
+        cat("=")
+    }
+    
+    # finish condition
+    if (counter == length(mzid_files)) {
+        cat("\n\nJob done!")
+        counter <- 0
+        break
+    }
+}
+   
+if (counter != length(mzid_files)) {
+    cat("\n\nRunning out of memory! Restarting...\n\n")
+    .rs.restartR()
+}
+```
+
+# 3. Format data into MaxQuant evidence format
+
+Note: This is done so that the resulting "evidence.txt" file can be used using the same scripts no matter what the origin (MS-GF+ or MaxQuant).
+
+## 3.1 Add intensity data to mzID files
+Note: there is a bit of a memory leak here, but it is minor.
+```{r, eval=FALSE}
+## Libraries
+library("mzR")
+library("data.table")
+library("conflicted")
+library("magrittr")
+library("progress")
+
+## source
+flag <- "set"
+source("~/Documents/MS/scripts/r_variables_MS.R")
+
+## function: append ids to mzml file from mzid file
+append_IDs <- function (mzml_file, mzid_file, outdir) {
+    # read files
+    temp_joined <- openMSfile(mzml_file) %>%
+  	    header() %>% # extract data from mzml file
+  	    as.data.table() %>% # format as data table to allow efficient operations
+  	    .[x = fread(mzid_file, sep = "\t", showProgress = F), on = c("spectrumID" = "spectrumId")] %>% # match by spectrum ID
+  	    .[!is.na(sequence)]  %>% # remove rows where sequence is NA (no assigned peptide via MS-GF+)
+  	    .[, which(sapply(., function(x) all(is.na(x)))) := NULL] # remove all columns with NA-only values
+
+   # Write the updated mzid file with added precursorIntensity column
+   fwrite(temp_joined, outdir, row.names = FALSE, sep = "\t")
+}
+
+### Main
+## Spider files to grab unID'd tsvs
+mzid_files_all <- list(mzid_files_hp <- list.files(paste0(mzid_dir, "hp"), pattern = ".tsv$", full.names = TRUE, recursive = TRUE) %>%
+   .[!grepl("ID.tsv$", x = .)], # make sure that the ID'd files aren't captured here 
+   mzid_files_hpsp <- list.files(paste0(mzid_dir, "hpsp"), pattern = ".tsv$", full.names = TRUE, recursive = TRUE) %>%
+   .[!grepl("ID.tsv$", x = .)] # make sure that the ID'd files aren't captured here
+   )
+
+## setup flags/progress trackers
+stop <- FALSE # setup flag for memory stop
+pb <- progress_bar$new(
+   format = "Concatenating mzML and mzID files [:bar] :percent eta: :eta",
+   total = length(unlist(mzid_files_all)), clear = FALSE, width = 80)
+
+
+## main loop - spider mzID files, append intensities from mzMLs, and save as .tsvs
+# NOTE: this throws an error when all files are converted instead of just saying "Job done". Welp.
+overwrite <- F
+for (id in seq_along(mzid_files_all)) {
+    for (mzidfile in mzid_files_all[[id]]) {
+        # # toy data  
+        # mzidfile <- "/home/tomas/MS/analysis/mzid/hp/plk89_FAIMS/PLK089_EXPL_220428_PrF_PA1_2uL_DDA-Faims_90M_60G_hp.tsv"
+        
+        # gather information for outputs
+        basename <- stringr::str_match(string = mzidfile, pattern = "(\\/plk.*)_.*\\.tsv$")[2]
+        pdb <- stringr::str_match(string = mzidfile, pattern = ".*_(.*)\\.tsv$")[2] # protein database used for annotation
+        mzmlfile <- paste0(mzml_dir, basename, ".mzML") # paired mzML file
+        outtsv <- paste0(mzid_dir, "/", pdb, basename,"_", pdb,"_ID.tsv") # output file
+        
+        # skip if ID file already exists, track progress
+        if (file.exists(outtsv) & !overwrite) {
+            counter = counter + 1
+            pb$tick()
+            next
+        }
+
+        # run converter
+        append_IDs(mzml_file = mzmlfile, mzid_file = mzidfile, outdir = outtsv)
+        pb$tick()
+        
+        # check available memory
+        available_memory <- ps::ps_system_memory()$avail/(1024^3)
+        if (available_memory < 0.5) {
+            stop <- TRUE # Fire the flag, and break the inner loop
+            cat("\n\nRunning out of memory! Restarting...\n\n")
+            break
+        }
+        
+        if (stop) break # Break if flag fired
+    }
+}
+
+if (stop) {
+   cat("Restarting...")
+   .rs.restartR()
+} else cat("\n\nJob done!")
+```
+
+## 3.2 Concatenate the ID-matched tsvs
+Note: this contains a memory leak
+```{r, eval=FALSE}
+### Setup
+## libraries
+library("data.table")
+library("stringr")
+library("magrittr")
+
+## source
+flag <- "set"
+source("~/Documents/MS/scripts/r_variables_MS.R")
+
+## List all the .tsv files in the directory
+mzid_files <- list.files(mzid_dir, pattern = "ID.tsv$", full.names = TRUE, recursive = TRUE) %>%
+   .[!grepl("toy", x = .)] # ignore any potential toy data
+
+## Function: extract protein database (pdb) names from filenames (default pattern given; kept longer > + regex readability)
+get_all_pdbs <- function(file_list, pattern = "mzid/(.*?)/"){
+   # init storage list
+   temp_list <- vector(mode = "list", length = length(file_list))
+   
+   # setup loop to get all pdb names
+   for(i in seq_along(file_list)){
+  	temp_list[i] <- str_match(string = file_list[i], pattern = pattern)[2]
+   }
+   
+   # return unique pdb names
+   return(paste0(unique(temp_list)))
+}
+
+## main loop; looped because I used multiple protein databases (pdbs)
+for (pdb in get_all_pdbs(file_list = mzid_files)) { # for all unique pdbs
+   # # Pass if the combined file already exists
+   # if(file.exists(paste0(tsv_combi_dir, "combined_mzids_", pdb, "_ID.tsv"))){
+   #	cat("Skipping the creation of a combined .tsv for the pdb ", pdb,", it already exists!\n", sep = "")
+   #	next
+   # }
+   
+   # Initialize an empty data frame to store the combined data
+   temp_combined <- data.table()
+   
+   # Get subset of mzids which match the pdb (in case others are present)
+   temp_file_list <-  str_subset(string = mzid_files, pattern = paste0(".*mzid/", pdb, "/.*"))   
+   
+   # Loop through each file and read the data into a data frame
+   for (tsv in temp_file_list) {
+  	#tsv <- mzid_hp_files[1]
+  	temp_dt <- fread(file = tsv, sep = "\t", header = TRUE, showProgress = F)
+ 	 
+  	# Combine the data with the existing combined data
+  	temp_combined <- rbindlist(list(temp_combined, temp_dt), fill = TRUE)
+   }
+   
+   # Write the combined data to a new .tsv file
+   if (!dir.exists(tsv_combi_dir)) dir.create(tsv_combi_dir)
+   cat("Writing file:", paste0(tsv_combi_dir, "combined_mzids_", pdb, "_ID.tsv", "...\n"))
+   fwrite(temp_combined, file = paste0(tsv_combi_dir, "combined_mzids_", pdb, "_ID.tsv"),
+      	sep = "\t", quote = FALSE, row.names = FALSE)
+   cat("Done!\n~ ~ ~\n")
+}
+
+rm(list = ls(all.names = TRUE))
+.rs.restartR()
+```
