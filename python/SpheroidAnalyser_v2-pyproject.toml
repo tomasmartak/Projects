@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "spheroidanalyser"
+version = "0.0.1"
+description = ""
+authors = ["Tomáš Marťák <tomas.martak@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+matplotlib = "^3.8.3"
+seaborn = "^0.13.2"
+opencv-python = "^4.9.0.80"
+
+[tool.poetry.scripts]
+my-script = "spheroidanalyser.spheroidAnalyser:start"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
