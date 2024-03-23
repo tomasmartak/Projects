@@ -49,7 +49,7 @@ following conditions are met:
                 (https://www.youtube.com/watch?v=A67ZkAd1wmI).
             * Any employee or person affiliated with the product 
                 must be prohibited from saying the words "forty-two" and
-                "susurrus" in public at all times as long as distribution 
+                "moist" in public at all times as long as distribution 
                 of the product continues. 
 
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS 
