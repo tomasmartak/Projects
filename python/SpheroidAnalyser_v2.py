@@ -1,21 +1,19 @@
 ### Imports - calculation
 import cv2
-import tkinter as tk
-from tkinter import filedialog
+import numpy as np
 import os
 import pandas as pd 
-import numpy as np
 import shutil
-
+import tkinter as tk
+from tkinter import filedialog
 
 ### Imports - graphing
 import matplotlib.pyplot as plt
-import seaborn as sns
 import re
+import seaborn as sns
 
-
-
-# calculate roundess ratio
+### Functions
+# calculate roundess ratio heuristic
 def calculate_roundness_ratio(cnt, ratio: float):
     _, (width, height), _ = cv2.minAreaRect(cnt)
     if width and height and width/height > ratio: 
@@ -50,13 +48,19 @@ def calculate_largest_speroid_area(impath: str, countour_dir: str):
     # return largest area
     if largest_area > 100000:
         # draw the contours onto the base image and save it
-        cv2.drawContours(image=image, contours=largest_contour, contourIdx=-1, color=(0, 255, 0), thickness=2, lineType=cv2.LINE_AA) 
+        cv2.drawContours(
+            image=image, contours=largest_contour, contourIdx=-1, 
+            color=(0, 255, 0), thickness=2, lineType=cv2.LINE_AA
+        ) 
         cv2.imwrite(f"{countour_dir}DrawComputedEdges_{os.path.basename(impath)}", image)
         return [os.path.basename(impath), largest_area] # returns list, [0] = name of file, [1] = area
     else:
         print(f"No contours of the right shape (circularity > 0.7) or size (> 100k px) were found in the image {os.path.basename(impath)}. Will be ignored.")
         # draw the contours onto the base image and save it
-        cv2.drawContours(image=image, contours=largest_contour, contourIdx=-1, color=(0, 0, 255), thickness=2, lineType=cv2.LINE_AA)       
+        cv2.drawContours(
+            image=image, contours=largest_contour, contourIdx=-1,
+            color=(0, 0, 255), thickness=2, lineType=cv2.LINE_AA
+        )       
         cv2.imwrite(f"{countour_dir}ERROR_DrawComputedEdges_{os.path.basename(impath)}", image)
         return [os.path.basename(impath), "NA"]
 
@@ -109,7 +113,9 @@ def process_directory(directory_path: str):
                     areas_combined.append(temp_result)
             
             # save areas to tables under specific filename
-            areas_combined = pd.DataFrame(areas_combined, columns=['Hours', "CellType", "Phenotype",'Filename', 'Size_px'])
+            areas_combined = pd.DataFrame(
+                areas_combined, columns=['Hours', "CellType", "Phenotype",'Filename', 'Size_px']
+            )
             areas_combined.to_csv(f"{outdir}/area-table-raw.csv", index=False, sep=";")
 
             # append areas_combined to df_master
