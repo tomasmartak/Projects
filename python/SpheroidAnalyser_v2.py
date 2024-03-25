@@ -1,3 +1,6 @@
+### Imports - general
+from typing import List
+
 ### Imports - calculation
 import cv2
 import numpy as np
@@ -15,26 +18,68 @@ import seaborn as sns
 ### Functions
 # evaluator for two-step roundness ratio heuristic
 def evaluate_roundness(cnt, ratio: float) -> bool:
+    """
+    Evaluates if the contour is roughly round based on the ratio of width to height
+    and the ratio of actual area to area of fitted circle. The latter is calculated
+    based on the average of width and height.
+
+    Parameters
+    ----------
+    cnt : np.ndarray
+        Contour to evaluate.
+    ratio : float
+        Minimum accepted ratio of width to height.
+
+    Returns
+    -------
+    bool
+        True if contour is approximately round, False otherwise.
+    """
     _, (width, height), _ = cv2.minAreaRect(cnt)
-    if width and height and width/height > ratio: 
-        return (cv2.contourArea(cnt)/(3.14159 * (((width + height)/4)**2))) > ratio # actual area vs area of fitted circle based off of avg(width+height)
-            # width + height = diameter * 2 = radius * 4
+    if width and height and width/height > ratio:
+        # calculate the area of the fitted circle based on the average of width and height
+        radius = (width + height)/4
+        # actual area of contour vs. area of fitted circle
+        area_ratio = cv2.contourArea(cnt)/(3.14159 * radius**2)
+        return area_ratio > ratio  # True if contour is approximately round, False otherwise
     return False
+
     
 # return list with paired dir path and spheroid area
-def calculate_largest_speroid_area(impath: str, countour_dir: str) -> list:       
+def calculate_largest_speroid_area(impath: str, countour_dir: str) -> List[str]:
+    """
+    Calculates the largest spherical area of a contour in an image.
+
+    Parameters
+    ----------
+    impath : str
+        Path to the image.
+    countour_dir : str
+        Path to the directory where the output images will be saved.
+
+    Returns
+    -------
+    List[str]
+        A list with two elements: [0] is the name of the file and [1] is the area of
+        the largest spherical contour, or "NA" if no contour of the required shape
+        and size was found.
+    """
     image = cv2.imread(impath)
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) # convert to grayscale
-    blurred = cv2.GaussianBlur(gray, (33, 33), 0) # softens super-sharp high-frequency single-cell edges and edge fibers --> cleaner segmentation
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)  # convert to grayscale
+    blurred = cv2.GaussianBlur(gray, (33, 33), 0)  # softens super-sharp high-frequency single-cell edges and edge fibers --> cleaner segmentation
 
     # use Gaussian adaptive thresholding to gain better noise-reduction
-    thresh = cv2.adaptiveThreshold(src=blurred, maxValue=255, adaptiveMethod=cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                                   thresholdType=cv2.THRESH_BINARY_INV, blockSize=701, C=1) # 700ish was determined empirically; must be odd; constant not needed
-    thresh = cv2.erode(thresh, (1,1),iterations = 2) # to remove thin connections
+    thresh = cv2.adaptiveThreshold(
+        src=blurred, maxValue=255, adaptiveMethod=cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        thresholdType=cv2.THRESH_BINARY_INV, blockSize=701, C=1
+    )  # 700ish was determined empirically; must be odd; constant not needed
+    thresh = cv2.erode(thresh, (1, 1), iterations=2)  # to remove thin connections
 
     # generate contours
-    contours, _ = cv2.findContours(image=thresh, mode=cv2.RETR_TREE, method=cv2.CHAIN_APPROX_NONE)
-    
+    contours, _ = cv2.findContours(
+        image=thresh, mode=cv2.RETR_TREE, method=cv2.CHAIN_APPROX_NONE
+    )
+
     # find largest contour
     largest_area = -1
     largest_contour = None
@@ -49,23 +94,43 @@ def calculate_largest_speroid_area(impath: str, countour_dir: str) -> list:
     if largest_area > 100000:
         # draw the contours onto the base image and save it
         cv2.drawContours(
-            image=image, contours=largest_contour, contourIdx=-1, 
+            image=image, contours=largest_contour, contourIdx=-1,
             color=(0, 255, 0), thickness=2, lineType=cv2.LINE_AA
-        ) 
-        cv2.imwrite(f"{countour_dir}DrawComputedEdges_{os.path.basename(impath)}", image)
-        return [os.path.basename(impath), largest_area] # returns list, [0] = name of file, [1] = area
+        )
+        cv2.imwrite(
+            f"{countour_dir}DrawComputedEdges_{os.path.basename(impath)}", image
+        )
+        return [os.path.basename(impath), str(largest_area)]
     else:
-        print(f"No contours of the right shape (circularity > 0.7) or size (> 100k px) were found in the image {os.path.basename(impath)}. Will be ignored.")
+        print(
+            f"No contours of the right shape (circularity > 0.7) or size (> 100k px) were found in the image {os.path.basename(impath)}. Will be ignored."
+        )
         # draw the contours onto the base image and save it
         cv2.drawContours(
             image=image, contours=largest_contour, contourIdx=-1,
             color=(0, 0, 255), thickness=2, lineType=cv2.LINE_AA
-        )       
-        cv2.imwrite(f"{countour_dir}ERROR_DrawComputedEdges_{os.path.basename(impath)}", image)
+        )
+        cv2.imwrite(
+            f"{countour_dir}ERROR_DrawComputedEdges_{os.path.basename(impath)}", image
+        )
         return [os.path.basename(impath), "NA"]
 
 # process the whole directory
 def process_directory(directory_path: str) -> None:
+    """
+    Analyse all images in the given directory and subdirectories,
+    and store the analysis results in a master table.
+
+    Parameters
+    ----------
+    directory_path : str
+        Path to the directory containing the images.
+
+    Returns
+    -------
+    None
+
+    """
     # remove all previous instances of spheroidAnalyser results; may change to skip directories with results instead...
     print("Preparing directory...")
     for (root,dirs,files) in os.walk(directory_path):
@@ -98,7 +163,7 @@ def process_directory(directory_path: str) -> None:
                 raise ValueError(f"Expected directory '{proj_code[1]}' name to be a cell from the list (H1299, Panc1, Hela, HEK293, HEK293T, hMSC).\nIf the cell line exists and isn't in this list, contact the app developer at tomas.martak@gmail.com.\nPlease check that the directory structure is as follows: hours grown (e.g. 24) -> cell type (e.g. H1299) -> cell phenotype (e.g. WT).")
             if type(proj_code[2]) != str or len(proj_code[2]) != 2:
                 raise ValueError(f"Expected directory '{proj_code[2]}' name to be text describing the cell phenotype, of which there can be only 2.\nPlease check that the directory structure is as follows: hours grown (e.g. 24) -> cell type (e.g. H1299) -> cell phenotype (e.g. WT).")
-            
+
             # load vars              
             outdir = f"{root}/spheroidAnalyser"
             contour_dir = f"{outdir}/traced_images/"
@@ -129,6 +194,22 @@ def process_directory(directory_path: str) -> None:
                 
 # once this is done, generate a boxplot graph from the master_df csv
 def make_graph(indir: str) -> None:
+    """
+    Make graph of spheroid size by hours grown and phenotype
+
+    Reads csv from indir and makes a graph for each cell type, 
+    with hours on the x-axis and spheroid size on the y-axis,
+    with different colors for each phenotype
+
+    Parameters
+    ----------
+    indir : str
+        Directory path to read csv from
+
+    Returns
+    -------
+    None
+    """
     # prep outdir
     print("Preparing directory...")
     os.makedirs(f"{indir}/spheroidAnalyser results", exist_ok = True) 
@@ -149,7 +230,7 @@ def make_graph(indir: str) -> None:
         
         # draw boxplot and jitter
         sns.boxplot(
-            data = temp_df, x = "Hours", y = "Size_px",
+            data = temp_df, x = "Hours", y = "Size_px", 
             hue = "Phenotype", palette = ["g", "r"], showfliers = False
         )
         sns.stripplot(
@@ -172,6 +253,7 @@ def make_graph(indir: str) -> None:
         plt.close()
 
     print("Done.")
+
 
 ### Main
 if __name__ == "__main__":
