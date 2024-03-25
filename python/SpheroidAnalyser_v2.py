@@ -13,16 +13,16 @@ import re
 import seaborn as sns
 
 ### Functions
-# calculate roundess ratio heuristic
-def calculate_roundness_ratio(cnt, ratio: float):
+# evaluator for two-step roundness ratio heuristic
+def evaluate_roundness(cnt, ratio: float) -> bool:
     _, (width, height), _ = cv2.minAreaRect(cnt)
     if width and height and width/height > ratio: 
         return (cv2.contourArea(cnt)/(3.14159 * (((width + height)/4)**2))) > ratio # actual area vs area of fitted circle based off of avg(width+height)
             # width + height = diameter * 2 = radius * 4
     return False
     
-# calculate spheroid area
-def calculate_largest_speroid_area(impath: str, countour_dir: str):       
+# return list with paired dir path and spheroid area
+def calculate_largest_speroid_area(impath: str, countour_dir: str) -> list:       
     image = cv2.imread(impath)
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) # convert to grayscale
     blurred = cv2.GaussianBlur(gray, (33, 33), 0) # softens super-sharp high-frequency single-cell edges and edge fibers --> cleaner segmentation
@@ -41,7 +41,7 @@ def calculate_largest_speroid_area(impath: str, countour_dir: str):
     for cnt in contours:
         area = cv2.contourArea(cnt)
         if area > largest_area:
-            if calculate_roundness_ratio(cnt, 0.6):
+            if evaluate_roundness(cnt, 0.6):
                 largest_area = area
                 largest_contour = cnt
 
@@ -65,7 +65,8 @@ def calculate_largest_speroid_area(impath: str, countour_dir: str):
         return [os.path.basename(impath), "NA"]
 
 # process the whole directory
-def process_directory(directory_path: str):
+def process_directory(directory_path: str) -> None:
+    # remove all previous instances of spheroidAnalyser results; may change to skip directories with results instead...
     print("Preparing directory...")
     for (root,dirs,files) in os.walk(directory_path):
         # remove any previous occurrence of the "analysis" dir
@@ -73,8 +74,9 @@ def process_directory(directory_path: str):
             if 'spheroidAnalyser' in name:
                 full_path = os.path.join(root, name)
                 shutil.rmtree(full_path)
-    
     print("Done. Analysing spheroid sizes...")
+    
+    # spider directories and calculate spheroid areas; gather into tables
     master_df = pd.DataFrame(columns=['Hours', "CellType", "Phenotype",'Filename', 'Size_px'])
     for (root,dirs,files) in os.walk(directory_path):                                             
         # Check if there are no further subdirectories (endpoint directory)
@@ -87,7 +89,7 @@ def process_directory(directory_path: str):
             proj_code = root[len(directory_path):].strip("\\").split("\\")
             print(f"\033[92mAnalysis starting on {'_'.join(proj_code)}...\033[0m")
             
-            # check directory structure
+            # check directory structure; very basic
             if len(proj_code) != 3:
                 raise ValueError(f"Expected directory '{'_'.join(proj_code)}' to be structured as follows: hours grown (e.g. 24) -> cell type (e.g. H1299) -> cell phenotype (e.g. WT).\nThe directory selected should have 3 nested folders, this one has {len(proj_code)}.")
             if not re.search(r'^\d{1,4}.*[Hh][Rr]$', proj_code[0]):
@@ -100,7 +102,7 @@ def process_directory(directory_path: str):
             # load vars              
             outdir = f"{root}/spheroidAnalyser"
             contour_dir = f"{outdir}/traced_images/"
-            areas_combined = []
+            area_table_combi = []
             
             # prep outdir
             os.makedirs(contour_dir, exist_ok = True)
@@ -110,23 +112,23 @@ def process_directory(directory_path: str):
                 if filename.lower().endswith((".png", ".jpg", ".jpeg", ".tiff")):
                     temp_result = calculate_largest_speroid_area(os.path.join(root, filename), contour_dir)
                     temp_result = proj_code + temp_result
-                    areas_combined.append(temp_result)
+                    area_table_combi.append(temp_result)
             
             # save areas to tables under specific filename
-            areas_combined = pd.DataFrame(
-                areas_combined, columns=['Hours', "CellType", "Phenotype",'Filename', 'Size_px']
+            area_table_combi = pd.DataFrame(
+                area_table_combi, columns=['Hours', "CellType", "Phenotype",'Filename', 'Size_px']
             )
-            areas_combined.to_csv(f"{outdir}/area-table-raw.csv", index=False, sep=";")
+            area_table_combi.to_csv(f"{outdir}/area-table-raw.csv", index=False, sep=";")
 
-            # append areas_combined to df_master
-            master_df = pd.concat((master_df, areas_combined), axis = 0, ignore_index=True)
+            # append area_table_combi to df_master
+            master_df = pd.concat((master_df, area_table_combi), axis = 0, ignore_index=True)
     
     print("Done. Saving master table...")
     master_df.to_csv(f"{directory_path}/master-area-table-raw.csv", index=False, sep=";")
     print("Analysis complete!\n")
                 
 # once this is done, generate a boxplot graph from the master_df csv
-def make_graph(indir: str):
+def make_graph(indir: str) -> None:
     # prep outdir
     print("Preparing directory...")
     os.makedirs(f"{indir}/spheroidAnalyser results", exist_ok = True) 
